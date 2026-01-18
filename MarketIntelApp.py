@@ -77,12 +77,12 @@ if start_d and end_d:
     if st.button("📊 加载分析报告 (Load Analysis Report)", type="primary"):
         all_rows = []
         
-        # [优化 1] 减小 batch_size 防止超时 (建议 5000-10000)
+        # [优化 1] 减小 batch_size 防止超时
         batch_size = 5000 
         page = 0
-        max_pages = 100 # 增加最大页数限制，防止无限循环
+        max_pages = 100 
         
-        # [优化 2] 明确指定需要的列 (!!! 这里增加了 importer_name !!!)
+        # [优化 2] 明确指定需要的列 (含 importer_name)
         needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,exporter_name,importer_name"
         
         with st.status("🚀 初始化提取任务...", expanded=True) as status:
@@ -99,7 +99,7 @@ if start_d and end_d:
                     msg_placeholder.info(f"🔄 正在提取第 {page+1} 批数据 (Offset {range_start})...")
                     status.update(label=f"正在运行: 已获取 {len(all_rows)} 条记录...")
                     
-                    # 执行查询 (带 select 限制列)
+                    # 执行查询
                     response = utils.supabase.table('trade_records')\
                         .select(needed_columns)\
                         .gte('transaction_date', start_d).lte('transaction_date', end_d)\
@@ -111,10 +111,9 @@ if start_d and end_d:
                     
                     all_rows.extend(rows)
                     
-                    # 简单更新进度条 (视觉效果)
+                    # 简单更新进度条
                     if page < 50: progress_bar.progress((page + 1) / 50)
                     
-                    # 如果取回的数据少于 batch_size，说明是最后一页
                     if len(rows) < batch_size: break
                     page += 1
                 
@@ -141,6 +140,11 @@ if start_d and end_d:
 # ==========================================
 if st.session_state.get('report_active', False) and not st.session_state['analysis_df'].empty:
     df = st.session_state['analysis_df']
+
+    # --- [NEW] 港口名称映射逻辑 ---
+    # 在所有图表渲染前，把 INMUN1 替换为 Mundra
+    if hasattr(config, 'PORT_CODE_TO_NAME'):
+        df['port_of_arrival'] = df['port_of_arrival'].replace(config.PORT_CODE_TO_NAME)
     
     # --- 数据清洗与名称映射 ---
     # 1. 基础处理
@@ -349,7 +353,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 title="🔥 Top 10 Exporters (供应商) - USD",
                 color="total_value_usd", 
                 color_continuous_scale="Oranges", 
-                text_auto='.2s' # 自动格式化 (如 1.5M, 200k)
+                text_auto='.2s' 
             )
             fig_exp.update_layout(xaxis_title="Total Value (USD)")
             st.plotly_chart(fig_exp, use_container_width=True)
@@ -368,6 +372,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             fig_imp.update_layout(xaxis_title="Total Value (USD)")
             st.plotly_chart(fig_imp, use_container_width=True)
 
+        st.divider()
 
         # ============================================
         # 5. 港口分析 (Port Analysis)
@@ -413,7 +418,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         # 坐标匹配
         def get_coords(port_name):
             if not port_name: return None, None
-            p_upper = port_name.upper().strip()
+            p_upper = str(port_name).upper().strip() # 强制转字符串防止报错
             if p_upper in config.PORT_COORDINATES:
                 return config.PORT_COORDINATES[p_upper]['lat'], config.PORT_COORDINATES[p_upper]['lon']
             for key in config.PORT_COORDINATES:
