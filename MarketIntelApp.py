@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import config
 import utils  # 引用 utils.py
 
+# --- 页面基础设置 ---
 st.set_page_config(page_title="Timber Intel Core", page_icon="🌲", layout="wide")
 
 st.title("🌲 Timber Intel - 情报分析看板")
@@ -21,7 +22,8 @@ if 'analysis_df' not in st.session_state:
 with st.sidebar:
     st.header("📊 分析设置")
     
-    if 'access_token' in st.session_state:
+    # 简单的 Token 状态检查
+    if utils.get_auto_token(): # 尝试获取或刷新 Token
         st.success("✅ API Token 有效")
     else:
         st.info("API 未激活 (进入下载页自动激活)")
@@ -30,6 +32,7 @@ with st.sidebar:
     
     selected_category = st.selectbox("产品分类", list(config.HS_CODES_MAP.keys()))
     target_hs_codes = config.HS_CODES_MAP[selected_category]
+    # 默认过去一年
     date_range = st.date_input("日期范围", value=(datetime.today() - timedelta(days=365), datetime.today()))
 
 # ==========================================
@@ -70,38 +73,33 @@ if isinstance(date_range, tuple):
 if start_d and end_d:
     st.info(f"📅 当前分析范围: **{start_d}** 至 **{end_d}**")
 
-    # ... (前面的代码保持不变) ...
-
-
- # ... (前面的代码保持不变不变)
-
+    # 点击按钮 -> 触发数据加载并存入 Session State
     if st.button("📊 加载分析报告 (Load Analysis Report)", type="primary"):
         all_rows = []
-        batch_size = 5000  # 保持减小后的 batch_size 防止超时
+        
+        # [优化 1] 减小 batch_size 防止超时 (建议 5000-10000)
+        batch_size = 5000 
         page = 0
-        max_pages = 50
-        needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,exporter_name"
-
-        # 创建状态容器
+        max_pages = 100 # 增加最大页数限制，防止无限循环
+        
+        # [优化 2] 明确指定需要的列 (!!! 这里增加了 importer_name !!!)
+        needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,exporter_name,importer_name"
+        
         with st.status("🚀 初始化提取任务...", expanded=True) as status:
-            # [关键修改 1] 创建一个空的占位符，用于动态刷新文字
+            # [优化 3] 创建占位符，实现动态单行刷新
             msg_placeholder = st.empty()
-            # [可选] 加个进度条看起来更专业
             progress_bar = st.progress(0)
-
+            
             try:
                 while page < max_pages:
                     range_start = page * batch_size
                     range_end = range_start + batch_size - 1
                     
-                    # [关键修改 2] 使用占位符更新文字，而不是 status.write()
-                    # 这样旧的文字会被新的覆盖，永远只显示一行
+                    # 动态更新文字
                     msg_placeholder.info(f"🔄 正在提取第 {page+1} 批数据 (Offset {range_start})...")
-                    
-                    # 也可以顺便更新一下 status 标题，让用户知道总体进度
                     status.update(label=f"正在运行: 已获取 {len(all_rows)} 条记录...")
-
-                    # 执行查询
+                    
+                    # 执行查询 (带 select 限制列)
                     response = utils.supabase.table('trade_records')\
                         .select(needed_columns)\
                         .gte('transaction_date', start_d).lte('transaction_date', end_d)\
@@ -113,22 +111,18 @@ if start_d and end_d:
                     
                     all_rows.extend(rows)
                     
-                    # 更新进度条 (假定大概几页，或者简单的动态滚动)
-                    if page < 20: progress_bar.progress((page + 1) / 20)
-
+                    # 简单更新进度条 (视觉效果)
+                    if page < 50: progress_bar.progress((page + 1) / 50)
+                    
+                    # 如果取回的数据少于 batch_size，说明是最后一页
                     if len(rows) < batch_size: break
                     page += 1
                 
-                # 循环结束后，清理掉进度条和临时文字
+                # 清理 UI
                 progress_bar.empty()
                 msg_placeholder.empty()
                 
                 status.update(label=f"✅ 提取完成: 共 {len(all_rows)} 条记录", state="complete")
-                
-                # ... (后续存入 Session State 的代码保持不变)
-                
-                # ... (后面的代码保持不变) ...
-
                 
                 # 存入 Session State
                 if all_rows:
@@ -154,12 +148,15 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
     max_date = df['transaction_date'].max()
     st.caption(f"🔎 覆盖检查: 数据库返回的最早日期是 `{min_date}`，最晚日期是 `{max_date}`")
     
-    # 2. 本地筛选
+    # 2. 本地筛选 (HS Code)
     df['match_hs'] = df['hs_code'].astype(str).apply(lambda x: any(x.startswith(t) for t in final_ana_hs_codes))
     df = df[df['match_hs']]
     
     # 识别树种
-    df['Species'] = df['product_desc_text'].apply(utils.identify_species)
+    if 'product_desc_text' in df.columns:
+        df['Species'] = df['product_desc_text'].apply(utils.identify_species)
+    else:
+        df['Species'] = 'Unknown'
 
     # ========================================================
     # 🔥 自动清洗脏数据 (Smart Cleaning Logic)
@@ -330,7 +327,50 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
 
         # ============================================
-        # 4. 港口分析 (Port Analysis)
+        # 4. 贸易商排名 (Top Traders - by Value USD)
+        # ============================================
+        st.subheader("🏆 贸易商排名 (Top Traders - by Value USD)")
+        
+        # 简单的数据清洗
+        if 'importer_name' not in df.columns:
+            df['importer_name'] = 'Unknown'
+            
+        df['importer_name'] = df['importer_name'].fillna('Unknown').replace('', 'Unknown')
+        df['exporter_name'] = df['exporter_name'].fillna('Unknown').replace('', 'Unknown')
+        
+        trader_c1, trader_c2 = st.columns(2)
+        
+        with trader_c1:
+            # Top Exporters (按金额 USD)
+            top_exporters = df.groupby('exporter_name')['total_value_usd'].sum().nlargest(10).sort_values(ascending=True).reset_index()
+            fig_exp = px.bar(
+                top_exporters, y="exporter_name", x="total_value_usd", 
+                orientation='h',
+                title="🔥 Top 10 Exporters (供应商) - USD",
+                color="total_value_usd", 
+                color_continuous_scale="Oranges", 
+                text_auto='.2s' # 自动格式化 (如 1.5M, 200k)
+            )
+            fig_exp.update_layout(xaxis_title="Total Value (USD)")
+            st.plotly_chart(fig_exp, use_container_width=True)
+            
+        with trader_c2:
+            # Top Buyers (按金额 USD)
+            top_importers = df.groupby('importer_name')['total_value_usd'].sum().nlargest(10).sort_values(ascending=True).reset_index()
+            fig_imp = px.bar(
+                top_importers, y="importer_name", x="total_value_usd", 
+                orientation='h',
+                title="🛒 Top 10 Buyers (采购商) - USD",
+                color="total_value_usd", 
+                color_continuous_scale="Teal", 
+                text_auto='.2s'
+            )
+            fig_imp.update_layout(xaxis_title="Total Value (USD)")
+            st.plotly_chart(fig_imp, use_container_width=True)
+
+
+        # ============================================
+        # 5. 港口分析 (Port Analysis)
         # ============================================
         st.subheader("⚓ 港口分析 (Port Analysis)")
         
@@ -432,8 +472,9 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         
         # 详情表
         st.subheader("📋 详细数据 (Details)")
-        # [NEW] 加上 unit_price
-        cols = ['transaction_date', 'hs_code', 'Species', 'origin_name', 'dest_name', 'port_of_arrival', 'quantity', 'quantity_unit', 'total_value_usd', 'unit_price', 'exporter_name']
+        
+        # [NEW] 加上 unit_price, importer_name
+        cols = ['transaction_date', 'hs_code', 'Species', 'origin_name', 'dest_name', 'port_of_arrival', 'quantity', 'quantity_unit', 'total_value_usd', 'unit_price', 'exporter_name', 'importer_name']
         final_cols = [c for c in cols if c in df.columns]
         st.dataframe(df[final_cols], use_container_width=True)
 
