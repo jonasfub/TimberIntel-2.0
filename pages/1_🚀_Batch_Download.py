@@ -140,7 +140,14 @@ if st.button("🔍 Check Volume (查询数据量)"):
                     if count == 0: count = data_node.get('totalElements', 0)
                     results.append({"HS Code": hs, "Flow": d, "API Count": count})
                     total_count += count
-                else: results.append({"HS Code": hs, "Flow": d, "API Count": "Error"})
+                else:
+
+    # 获取具体的错误信息
+    error_msg = res.get('msg', 'Unknown Error') if res else 'No Response'
+    # 如果有 code，也显示出来
+    error_code = res.get('code', 'N/A') if res else 'N/A'
+    results.append({"HS Code": hs, "Flow": d, "API Count": f"Err {error_code}: {error_msg}"})
+
         status.update(label="Complete (完成)", state="complete")
         if results:
             st.table(pd.DataFrame(results))
