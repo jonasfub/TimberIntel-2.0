@@ -8,6 +8,7 @@ import config  # 引用你的配置
 # --- 核心配置 ---
 SUPABASE_URL = "https://ajfmhcustdzdmcbgowgx.supabase.co"
 SUPABASE_KEY = "sb_secret_UdSZUH99OqFQ0Irca_LUWg_a7Sp-j_7"
+# ⚠️ 注意：建议将 Key 放入 Streamlit Secrets 以提高安全性
 TENDATA_API_KEY = "42127b0db5597b4a0d7063b99900c0eb"
 
 # --- 1. 数据库连接 (使用缓存，避免重复连接) ---
@@ -21,17 +22,25 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# --- 2. 自动 Token 管理 ---
-def get_auto_token():
-    """获取 Token，优先读取 Session State"""
-    if 'access_token' in st.session_state and 'token_expiry' in st.session_state:
+# --- 2. 自动 Token 管理 (升级版：支持强制刷新) ---
+def get_auto_token(force_refresh=False):
+    """
+    获取 Token。
+    :param force_refresh: 如果为 True，将忽略缓存，强制向 API 请求新 Token
+    """
+    # 如果不是强制刷新，且 Session 中有不过期的 Token，直接返回
+    if not force_refresh and 'access_token' in st.session_state and 'token_expiry' in st.session_state:
+        # 预留 60 秒缓冲期
         if time.time() < st.session_state['token_expiry']:
             return st.session_state['access_token']
 
+    # --- 请求新 Token ---
     auth_url = "https://open-api.tendata.cn/v2/access-token" 
     params = { "apiKey": TENDATA_API_KEY }
     
     try:
+        # 打印日志方便云端调试 (可选)
+        # print("🔄 Requesting new token...") 
         res = requests.get(auth_url, params=params)
         res_json = res.json()
         if str(res_json.get('code')) == '200':
@@ -45,6 +54,8 @@ def get_auto_token():
             return new_token
         else:
             st.error(f"🔐 自动登录失败: {res_json}")
+            # 如果失败，清除 Session 里的脏数据
+            if 'access_token' in st.session_state: del st.session_state['access_token']
             return None
     except Exception as e:
         st.error(f"🔐 认证网络错误: {e}")
@@ -62,9 +73,13 @@ def identify_species(description_text):
     return "Other"
 
 
-# utils.py - 核心修复：多字段发送 + 调试气泡
+# utils.py - 核心修复：智能重试机制 (Auto-Retry on 40302)
 
-def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports", origin_codes=None, dest_codes=None, just_checking=False, page_no=1, keyword=None):
+def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports", origin_codes=None, dest_codes=None, just_checking=False, page_no=1, keyword=None, retry_count=0):
+    """
+    获取数据，包含自动重试机制。
+    如果遇到 40302 (Token失效)，会自动刷新 Token 并重试一次。
+    """
     url = "https://open-api.tendata.cn/v2/trade"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
@@ -79,21 +94,44 @@ def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports"
     if origin_codes: payload['countryOfOriginCode'] = ";".join(origin_codes)
     if dest_codes: payload['countryOfDestinationCode'] = ";".join(dest_codes)
     
-    # 🔥 修复策略：同时发送多个常用字段名，看它认哪个
+    # 关键词多字段匹配策略
     if keyword:
-        payload['goodsDesc'] = keyword    # 可能性 1
-        payload['keyword'] = keyword      # 可能性 2
-        payload['productDesc'] = keyword  # 可能性 3
-        payload['desc'] = keyword         # 可能性 4
+        payload['goodsDesc'] = keyword   
+        payload['keyword'] = keyword      
+        payload['productDesc'] = keyword  
+        payload['desc'] = keyword         
         
-        # 🐛 调试：如果是预检模式，在界面弹出提示，确认参数已发送
-        if just_checking:
+        if just_checking and retry_count == 0:
             import streamlit as st
             st.toast(f"📡 发送筛选词: {keyword}", icon="🔍")
 
     try:
         response = requests.post(url, headers=headers, json=payload)
-        return response.json()
+        res_json = response.json()
+        
+        # 🔥 [核心修复] 检测 40302 Token 无效错误
+        if str(res_json.get('code')) == '40302':
+            if retry_count < 1: # 只重试一次，防止死循环
+                print(f"⚠️ Token Invalid (40302). Refreshing and Retrying... (HS: {hs_code})")
+                
+                # 1. 强制刷新 Token
+                new_token = get_auto_token(force_refresh=True)
+                
+                if new_token:
+                    # 2. 使用新 Token 递归调用自己进行重试
+                    return fetch_tendata_api(
+                        hs_code, start_date, end_date, 
+                        new_token, # 传入新 Token
+                        trade_type, origin_codes, dest_codes, just_checking, page_no, keyword, 
+                        retry_count=1 # 标记已重试
+                    )
+                else:
+                    return {"code": 40302, "msg": "Token refresh failed"}
+            else:
+                return {"code": 40302, "msg": "Token invalid after retry"}
+
+        return res_json
+
     except Exception as e:
         return {"code": 500, "msg": str(e)}
 
@@ -187,47 +225,29 @@ def get_all_country_codes():
         config.REGION_ASIA_ALL
     )))
 
-# utils.py 中修改这个函数
-
 def render_region_buttons(target_key, col_obj):
     """渲染地区快捷按钮 (累加模式 + 清空功能)"""
-    # 调整为 6 列，最后一列放清空按钮
     rc1, rc2, rc3, rc4, rc5, rc6 = col_obj.columns([1,1,1,1,1,1])
     
-    # 获取当前 Session State 中的已选列表，确保它是列表类型，防止报错
     current_selection = st.session_state.get(target_key, [])
     if not isinstance(current_selection, list):
         current_selection = []
 
-    # 定义一个内部函数来处理合并去重
     def add_region_codes(new_codes):
-        # 使用 set 进行集合运算：并集 (当前 | 新增)，实现累加去重
         merged_set = set(current_selection) | set(new_codes)
-        # 转回列表并排序，保持界面整洁
         st.session_state[target_key] = sorted(list(merged_set))
         st.rerun()
 
-    # AS=Asia
     if rc1.button("亚洲 (AS)", key=f"btn_as_{target_key}"): 
         add_region_codes(config.REGION_ASIA_ALL)
-        
-    # EU=Europe
     if rc2.button("欧洲 (EU)", key=f"btn_eu_{target_key}"): 
         add_region_codes(config.REGION_EUROPE_NO_RUS)
-        
-    # OC=Oceania
     if rc3.button("🇦🇺 澳新", key=f"btn_oc_{target_key}"): 
         add_region_codes(config.REGION_OCEANIA)
-        
-    # NA=North America
     if rc4.button("北美 (NA)", key=f"btn_na_{target_key}"): 
         add_region_codes(config.REGION_NORTH_AMERICA)
-        
-    # SA=South America
     if rc5.button("南美 (SA)", key=f"btn_sa_{target_key}"): 
         add_region_codes(config.REGION_SOUTH_AMERICA)
-
-    # 🗑️ 清空按钮
     if rc6.button("🗑️ 清空", key=f"btn_cls_{target_key}"):
         st.session_state[target_key] = []
         st.rerun()
