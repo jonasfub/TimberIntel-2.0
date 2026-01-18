@@ -141,13 +141,11 @@ if st.button("🔍 Check Volume (查询数据量)"):
                     results.append({"HS Code": hs, "Flow": d, "API Count": count})
                     total_count += count
                 else:
-
-    # 获取具体的错误信息
-    error_msg = res.get('msg', 'Unknown Error') if res else 'No Response'
-    # 如果有 code，也显示出来
-    error_code = res.get('code', 'N/A') if res else 'N/A'
-    results.append({"HS Code": hs, "Flow": d, "API Count": f"Err {error_code}: {error_msg}"})
-
+                    # [修复] 显示具体的错误信息，方便云端排查
+                    error_msg = res.get('msg', 'Unknown Error') if res else 'No Response'
+                    error_code = res.get('code', 'N/A') if res else 'N/A'
+                    results.append({"HS Code": hs, "Flow": d, "API Count": f"Err {error_code}: {error_msg}"})
+                    
         status.update(label="Complete (完成)", state="complete")
         if results:
             st.table(pd.DataFrame(results))
@@ -194,7 +192,9 @@ if start_btn:
                         if api_count < 50: has_more_data = False
                         else: page += 1; time.sleep(0.3)
                     else:
-                        log_box.error(f"HS {hs}: Error"); has_more_data = False
+                        # 记录具体的下载错误
+                        err_msg = res.get('msg', 'Unknown') if res else 'No Resp'
+                        log_box.error(f"HS {hs}: Error - {err_msg}"); has_more_data = False
                 
                 if total_saved_for_this_hs > 0: log_box.success(f"✅ HS {hs} ({d}) Done: Saved {total_saved_for_this_hs}")
                 else: log_box.warning(f"HS {hs} ({d}): No Data")
