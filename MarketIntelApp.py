@@ -77,14 +77,16 @@ if start_d and end_d:
     if st.button("📊 加载分析报告 (Load Analysis Report)", type="primary"):
         all_rows = []
         
-        # [优化] 减小 batch_size 防止超时
+        # [优化 1] 减小 batch_size 防止超时
         batch_size = 5000 
         page = 0
         max_pages = 100 
         
-        needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,exporter_name,importer_name"
+        # [优化 2] 明确指定需要的列 (含 importer_name, unique_record_id)
+        needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,exporter_name,importer_name,unique_record_id"
         
         with st.status("🚀 初始化提取任务...", expanded=True) as status:
+            # [优化 3] 创建占位符，实现动态单行刷新
             msg_placeholder = st.empty()
             progress_bar = st.progress(0)
             
@@ -93,14 +95,26 @@ if start_d and end_d:
                     range_start = page * batch_size
                     range_end = range_start + batch_size - 1
                     
+                    # 动态更新文字
                     msg_placeholder.info(f"🔄 正在提取第 {page+1} 批数据 (Offset {range_start})...")
                     status.update(label=f"正在运行: 已获取 {len(all_rows)} 条记录...")
                     
-                    response = utils.supabase.table('trade_records')\
+                    # [核心修复 1] 构建查询对象
+                    # 必须包含二级排序 unique_record_id，防止日期相同时分页数据乱序导致漏读
+                    query = utils.supabase.table('trade_records')\
                         .select(needed_columns)\
                         .gte('transaction_date', start_d).lte('transaction_date', end_d)\
                         .order("transaction_date", desc=True)\
-                        .range(range_start, range_end).execute()
+                        .order("unique_record_id", desc=True) 
+                    
+                    # [核心修复 2] 将筛选条件下推到数据库层！
+                    if ana_origins: 
+                        query = query.in_('origin_country_code', ana_origins)
+                    if ana_dests: 
+                        query = query.in_('dest_country_code', ana_dests)
+                    
+                    # 执行分页查询
+                    response = query.range(range_start, range_end).execute()
                     
                     rows = response.data
                     if not rows: break
@@ -116,6 +130,7 @@ if start_d and end_d:
                 
                 status.update(label=f"✅ 提取完成: 共 {len(all_rows)} 条记录", state="complete")
                 
+                # 存入 Session State
                 if all_rows:
                     st.session_state['analysis_df'] = pd.DataFrame(all_rows)
                     st.session_state['report_active'] = True
@@ -134,25 +149,17 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
     df = st.session_state['analysis_df']
 
     # --- [关键优化] 港口名称映射逻辑 ---
-    
-    # 1. 强力清洗：提取括号内的代码
-    #    "VIZAG SEA (INVTZ1)" -> "INVTZ1"
-    #    "Mundra" -> "Mundra" (不变)
+    # 1. 强力清洗
     df['port_of_arrival'] = df['port_of_arrival'].fillna('Unknown').astype(str).apply(
         lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in x else x.strip()
     )
-
-    # 2. 兜底替换：直接修正名称 (针对没有代码的情况)
-    #    万一数据是 "VIZAG SEA" 而没有代码，这里直接替换
+    # 2. 兜底替换
     name_fix_map = {
-        "VIZAG": "Visakhapatnam",
-        "VIZAG SEA": "Visakhapatnam",
-        "GOA": "Mormugao (Goa)",
-        "GOA PORT": "Mormugao (Goa)"
+        "VIZAG": "Visakhapatnam", "VIZAG SEA": "Visakhapatnam",
+        "GOA": "Mormugao (Goa)", "GOA PORT": "Mormugao (Goa)"
     }
     df['port_of_arrival'] = df['port_of_arrival'].replace(name_fix_map)
-
-    # 3. 应用标准代码映射表：INVTZ1 -> Visakhapatnam
+    # 3. 应用标准映射
     if hasattr(config, 'PORT_CODE_TO_NAME'):
         df['port_of_arrival'] = df['port_of_arrival'].replace(config.PORT_CODE_TO_NAME)
     
@@ -188,14 +195,12 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         if forbidden_species:
             dirty_rows = df[df['Species'].isin(forbidden_species)]
             if not dirty_rows.empty:
-                dirty_count = len(dirty_rows)
-                dirty_list = dirty_rows['Species'].unique()
-                st.warning(f"🧹 智能清洗: 自动隐藏了 {dirty_count} 条分类错误的记录 (识别为: {', '.join(dirty_list)})。原因：HS编码属于 {current_category_type}，但产品描述为 {forbidden_type}。")
                 df = df[~df['Species'].isin(forbidden_species)]
     # ========================================================
     
     # 继续原有的筛选
     if ana_species_selected: df = df[df['Species'].isin(ana_species_selected)]
+    # 本地筛选作为双重保险
     if ana_origins: df = df[df['origin_country_code'].isin(ana_origins)]
     if ana_dests: df = df[df['dest_country_code'].isin(ana_dests)]
 
@@ -228,35 +233,64 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
 
         # ============================================
-        # 1. 数量趋势
+        # 1. 数量趋势 (Volume Trends) - 带单位筛选
         # ============================================
         st.subheader("📈 数量趋势 (Volume Trends)")
-        r1_c1, r1_c2 = st.columns(2)
         
-        with r1_c1:
-            chart_species = df.groupby(['Month', 'Species'])['quantity'].sum().reset_index()
-            fig_sp = px.bar(
-                chart_species, x="Month", y="quantity", color="Species", 
-                title="月度数量趋势 - 按树种 (Qty by Species)",
-                category_orders={"Month": sorted_months}
+        # 1. 统计所有单位
+        df['quantity_unit'] = df['quantity_unit'].fillna('Unknown')
+        vol_units = df['quantity_unit'].unique().tolist()
+        
+        # 2. 尝试自动找到 M3/CBM 作为默认值
+        default_vol_unit_idx = 0
+        for i, u in enumerate(vol_units):
+            if str(u).upper() in ['MTQ', 'CBM', 'M3', 'M3 ']:
+                default_vol_unit_idx = i
+                break
+        
+        # 3. 渲染筛选框
+        c_vol_filter, _ = st.columns([1, 3])
+        with c_vol_filter:
+            target_unit = st.selectbox(
+                "🔢 选择统计单位 (Select Unit):", 
+                vol_units, 
+                index=default_vol_unit_idx,
+                key="vol_trend_unit",
+                help="选择特定单位（如M3）可以过滤掉单位错误导致的异常极值(Outliers)，解决图表显示为空的问题。"
             )
-            fig_sp.update_xaxes(type='category')
-            st.plotly_chart(fig_sp, use_container_width=True)
+            
+        # 4. 根据单位过滤数据
+        df_vol = df[df['quantity_unit'] == target_unit].copy()
+        
+        if not df_vol.empty:
+            r1_c1, r1_c2 = st.columns(2)
+            
+            with r1_c1:
+                chart_species = df_vol.groupby(['Month', 'Species'])['quantity'].sum().reset_index()
+                fig_sp = px.bar(
+                    chart_species, x="Month", y="quantity", color="Species", 
+                    title=f"月度数量趋势 - 按树种 ({target_unit})",
+                    category_orders={"Month": sorted_months}
+                )
+                fig_sp.update_xaxes(type='category')
+                st.plotly_chart(fig_sp, use_container_width=True)
 
-        with r1_c2:
-            chart_origin = df.groupby(['Month', 'origin_name'])['quantity'].sum().reset_index()
-            fig_org = px.bar(
-                chart_origin, x="Month", y="quantity", color="origin_name",
-                title="月度数量趋势 - 按出口国 (Qty by Origin)",
-                category_orders={"Month": sorted_months}
-            )
-            fig_org.update_xaxes(type='category')
-            st.plotly_chart(fig_org, use_container_width=True)
+            with r1_c2:
+                chart_origin = df_vol.groupby(['Month', 'origin_name'])['quantity'].sum().reset_index()
+                fig_org = px.bar(
+                    chart_origin, x="Month", y="quantity", color="origin_name",
+                    title=f"月度数量趋势 - 按出口国 ({target_unit})",
+                    category_orders={"Month": sorted_months}
+                )
+                fig_org.update_xaxes(type='category')
+                st.plotly_chart(fig_org, use_container_width=True)
+        else:
+            st.warning(f"在该单位 ({target_unit}) 下无数据，请切换单位。")
 
         st.divider()
         
         # ============================================
-        # 2. 金额趋势与结构
+        # 2. [核心修复] 金额趋势与结构 (Value Trends & Structure)
         # ============================================
         st.subheader("💰 金额趋势与结构 (Value Trends & Structure)")
         r2_c1, r2_c2 = st.columns(2)
@@ -275,16 +309,20 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         with r2_c2:
             if ana_origins and not ana_dests:
                 g_col = 'dest_name'
-                title_pie = "进口国数量占比 (Dest Share)"
+                label_suffix = "Dest"
             else:
                 g_col = 'origin_name'
-                title_pie = "出口国数量占比 (Origin Share)"
-            st.plotly_chart(px.pie(df, names=g_col, values='quantity', hole=0.4, title=title_pie), use_container_width=True)
+                label_suffix = "Origin"
+            
+            # [修正] 改为金额占比 (Value Share)，避免数量单位混乱问题
+            title_pie = f"出口国金额占比 ({label_suffix} Share - by Value USD)"
+            
+            st.plotly_chart(px.pie(df, names=g_col, values='total_value_usd', hole=0.4, title=title_pie), use_container_width=True)
 
         st.divider()
 
         # ============================================
-        # 3. 价格分析
+        # 3. 价格分析 (Price Analysis - USD)
         # ============================================
         st.subheader("🏷️ 价格分析 (Price Analysis)")
         
@@ -341,10 +379,11 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
 
         # ============================================
-        # 4. 贸易商排名
+        # 4. 贸易商排名 (Top Traders - by Value USD)
         # ============================================
         st.subheader("🏆 贸易商排名 (Top Traders - by Value USD)")
         
+        # 简单的数据清洗
         if 'importer_name' not in df.columns:
             df['importer_name'] = 'Unknown'
             
@@ -354,6 +393,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         trader_c1, trader_c2 = st.columns(2)
         
         with trader_c1:
+            # Top Exporters (按金额 USD)
             top_exporters = df.groupby('exporter_name')['total_value_usd'].sum().nlargest(10).sort_values(ascending=True).reset_index()
             fig_exp = px.bar(
                 top_exporters, y="exporter_name", x="total_value_usd", 
@@ -367,6 +407,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             st.plotly_chart(fig_exp, use_container_width=True)
             
         with trader_c2:
+            # Top Buyers (按金额 USD)
             top_importers = df.groupby('importer_name')['total_value_usd'].sum().nlargest(10).sort_values(ascending=True).reset_index()
             fig_imp = px.bar(
                 top_importers, y="importer_name", x="total_value_usd", 
@@ -382,7 +423,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
 
         # ============================================
-        # 5. 港口分析
+        # 5. 港口分析 (Port Analysis)
         # ============================================
         st.subheader("⚓ 港口分析 (Port Analysis)")
         
@@ -485,6 +526,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         # 详情表
         st.subheader("📋 详细数据 (Details)")
         
+        # [NEW] 加上 unit_price, importer_name, unique_record_id
         cols = ['transaction_date', 'hs_code', 'Species', 'origin_name', 'dest_name', 'port_of_arrival', 'quantity', 'quantity_unit', 'total_value_usd', 'unit_price', 'exporter_name', 'importer_name']
         final_cols = [c for c in cols if c in df.columns]
         st.dataframe(df[final_cols], use_container_width=True)
