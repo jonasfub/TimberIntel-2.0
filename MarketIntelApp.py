@@ -70,32 +70,65 @@ if isinstance(date_range, tuple):
 if start_d and end_d:
     st.info(f"📅 当前分析范围: **{start_d}** 至 **{end_d}**")
 
-    # 点击按钮 -> 触发数据加载并存入 Session State
+    # ... (前面的代码保持不变) ...
+
+
+ # ... (前面的代码保持不变不变)
+
     if st.button("📊 加载分析报告 (Load Analysis Report)", type="primary"):
         all_rows = []
-        batch_size = 50000 
+        batch_size = 5000  # 保持减小后的 batch_size 防止超时
         page = 0
-        max_pages = 20 
-        
-        with st.status("正在从数据库提取全量数据...", expanded=True) as status:
+        max_pages = 50
+        needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,exporter_name"
+
+        # 创建状态容器
+        with st.status("🚀 初始化提取任务...", expanded=True) as status:
+            # [关键修改 1] 创建一个空的占位符，用于动态刷新文字
+            msg_placeholder = st.empty()
+            # [可选] 加个进度条看起来更专业
+            progress_bar = st.progress(0)
+
             try:
                 while page < max_pages:
                     range_start = page * batch_size
                     range_end = range_start + batch_size - 1
-                    status.write(f"正在提取第 {page+1} 批数据 (Offset {range_start})...")
                     
-                    response = utils.supabase.table('trade_records').select("*")\
+                    # [关键修改 2] 使用占位符更新文字，而不是 status.write()
+                    # 这样旧的文字会被新的覆盖，永远只显示一行
+                    msg_placeholder.info(f"🔄 正在提取第 {page+1} 批数据 (Offset {range_start})...")
+                    
+                    # 也可以顺便更新一下 status 标题，让用户知道总体进度
+                    status.update(label=f"正在运行: 已获取 {len(all_rows)} 条记录...")
+
+                    # 执行查询
+                    response = utils.supabase.table('trade_records')\
+                        .select(needed_columns)\
                         .gte('transaction_date', start_d).lte('transaction_date', end_d)\
                         .order("transaction_date", desc=True)\
                         .range(range_start, range_end).execute()
                     
                     rows = response.data
                     if not rows: break
+                    
                     all_rows.extend(rows)
+                    
+                    # 更新进度条 (假定大概几页，或者简单的动态滚动)
+                    if page < 20: progress_bar.progress((page + 1) / 20)
+
                     if len(rows) < batch_size: break
                     page += 1
                 
-                status.update(label=f"提取完成: 共 {len(all_rows)} 条记录", state="complete")
+                # 循环结束后，清理掉进度条和临时文字
+                progress_bar.empty()
+                msg_placeholder.empty()
+                
+                status.update(label=f"✅ 提取完成: 共 {len(all_rows)} 条记录", state="complete")
+                
+                # ... (后续存入 Session State 的代码保持不变)
+                
+                # ... (后面的代码保持不变) ...
+
                 
                 # 存入 Session State
                 if all_rows:
