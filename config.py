@@ -1,29 +1,17 @@
 # config.py
-# 更新时间：2026-01-19 (最终完整版)
-# 包含功能：
-# 1. 树种识别增强 (SYP/Taeda + Typo修复)
-# 2. 印度港口代码转英文名 (Code -> Name)
-# 3. 坐标库已更新为英文名 Key
+# 更新时间：2026-01-19 (Vizag修正版)
+# 修复内容：
+# 1. 完善 Wood Chip 港口映射 (Vizag, Goa, Kakinada, Karaikal)
+# 2. 确保坐标库 Key 与映射后的英文名一致
 
 # ==========================================
 # 1. HS Code 映射表 (严格区分软硬木)
 # ==========================================
 HS_CODES_MAP = {
-    # --- 针叶木 (Softwood) ---
     "Softwood Lumber": ["440710", "440711", "440712", "440713", "440714", "440719"],
     "Softwood Logs": ["440320", "440321", "440322", "440323", "440324", "440325", "440326"],
-
-    # --- 阔叶木 (Hardwood) ---
-    "Hardwood Logs": [
-        "440391", "440393", "440394", "440395", "440396", "440397", "440398", "440399", 
-        "440341", "440342", "440349"
-    ],
-    "Hardwood Lumber": [
-        "440791", "440792", "440793", "440794", "440795", "440796", "440797", "440799", 
-        "440721", "440722", "440723", "440725", "440726", "440727", "440728", "440729"
-    ],
-
-    # --- 其他产品 ---
+    "Hardwood Logs": ["440391", "440393", "440394", "440395", "440396", "440397", "440398", "440399", "440341", "440342", "440349"],
+    "Hardwood Lumber": ["440791", "440792", "440793", "440794", "440795", "440796", "440797", "440799", "440721", "440722", "440723", "440725", "440726", "440727", "440728", "440729"],
     "Wood Chips": ["440121", "440122"],
     "Wood Pulp": ["4701", "4702", "4703", "4704", "4705", "4706"],
     "Recovered Paper": ["4707"],
@@ -35,27 +23,15 @@ HS_CODES_MAP = {
 }
 
 # ==========================================
-# 2. 树种关键词映射 (含 SYP/Taeda 优化)
+# 2. 树种关键词映射
 # ==========================================
 SPECIES_KEYWORDS = {
-    # --- Softwood (针叶木) ---
     "Radiata":    ["RADIATA", "RAD PINE", "MONTEREY", "INSIGNIS"],
-    
-    # [优化] 组合名称，涵盖美国叫法(SYP)、国际叫法(Taeda)及常见Typo
-    "SYP / Taeda": [
-        "SOUTHERN YELLOW", "SYP", "S.Y.P", # 美国通用
-        "SOUTHEN YELLOW", "SOUTERN YELLOW", "SOUHERN YELLOW", # Typo (拼写错误)
-        "TAEDA", "ELLIOTII", "LOBLOLLY", "SLASH PINE", # 国际/学名
-        "LONGLEAF", "SHORTLEAF", "CARIBAEA", "HONDURENSIS"
-    ],
-
+    "SYP / Taeda": ["SOUTHERN YELLOW", "SYP", "S.Y.P", "SOUTHEN YELLOW", "SOUTERN YELLOW", "SOUHERN YELLOW", "TAEDA", "ELLIOTII", "LOBLOLLY", "SLASH PINE", "LONGLEAF", "SHORTLEAF", "CARIBAEA", "HONDURENSIS"],
     "Spruce":     ["SPRUCE", "PICEA", "WHITEWOOD", "SPF"],
     "Fir":        ["FIR ", "ABIES", "DOUGLAS", "HEMLOCK"],
-    
-    "Pine (Gen)": ["PINE", "PINUS"], # 兜底通用松木
+    "Pine (Gen)": ["PINE", "PINUS"], 
     "Larch":      ["LARCH", "LARIX"],
-
-    # --- Hardwood (阔叶木) ---
     "Oak":        ["OAK", "QUERCUS", "RED OAK", "WHITE OAK"],
     "Birch":      ["BIRCH", "BETULA"],
     "Beech":      ["BEECH", "FAGUS"],
@@ -117,14 +93,19 @@ COUNTRY_NAME_MAP = {
 }
 
 # ==========================================
-# 5. 港口经纬度映射表 (Key已改为英文名)
+# 5. 港口经纬度映射表 (Key为标准英文名)
 # ==========================================
 PORT_COORDINATES = {
-    # --- 印度 (India) - 英文名 Key ---
+    # --- Wood Chip 关键港口 ---
+    "KAKINADA": {"lat": 16.9604, "lon": 82.2381},
+    "KARAIKAL": {"lat": 10.9254, "lon": 79.8380},
+    "MORMUGAO (GOA)": {"lat": 15.4026, "lon": 73.8033}, # 标准名
+    
+    # --- 印度主要港口 ---
     "MUNDRA": {"lat": 22.8396, "lon": 69.7203},
     "NHAVA SHEVA": {"lat": 18.9511, "lon": 72.9567},
     "CHENNAI": {"lat": 13.0827, "lon": 80.2707},
-    "VISAKHAPATNAM": {"lat": 17.6868, "lon": 83.2185},
+    "VISAKHAPATNAM": {"lat": 17.6868, "lon": 83.2185}, # Vizag 标准名
     "COCHIN": {"lat": 9.9656, "lon": 76.2625},
     "COCHIN (ICTT)": {"lat": 10.1518, "lon": 76.4019},
     "KATTUPALLI": {"lat": 13.3069, "lon": 80.3392},
@@ -134,24 +115,8 @@ PORT_COORDINATES = {
     "HAZIRA": {"lat": 21.0922, "lon": 72.6186},
     "KOLKATA": {"lat": 22.5478, "lon": 88.3182},
     "MUMBAI (AIR)": {"lat": 19.0886, "lon": 72.8680},
-    # 内陆 ICD
-    "ICD WHITEFIELD": {"lat": 12.9866, "lon": 77.7499},
-    "ICD PITHAMPUR": {"lat": 22.6841, "lon": 75.8770},
-    "ICD DHANNAD": {"lat": 22.6622, "lon": 75.5684},
-    "ICD GARHI HARSARU": {"lat": 28.4357, "lon": 76.9238},
-    "ICD SANATHNAGAR": {"lat": 17.4649, "lon": 78.4355},
-    "ICD TUGHLAKABAD": {"lat": 28.5134, "lon": 77.2662},
-    "ICD MORADABAD": {"lat": 28.8683, "lon": 78.7291},
-    "ICD PANKI": {"lat": 26.4385, "lon": 80.2222},
-    "ICD PATLI": {"lat": 28.9197, "lon": 76.9200},
-    "ICD BADDI": {"lat": 29.0200, "lon": 77.0500},
-    "ICD TIMMAPUR": {"lat": 17.2000, "lon": 78.2000},
-    "ICD SACHIN": {"lat": 20.2000, "lon": 72.8000},
-    "ICD ANKLESHWAR": {"lat": 17.6800, "lon": 83.2000},
-    "ICD AJMER": {"lat": 26.4499, "lon": 74.6399},
-    "ICD NOIDA": {"lat": 28.5355, "lon": 77.3910},
-
-    # --- 东非 (East Africa) ---
+    
+    # --- 其他区域 (保持原有) ---
     "MOMBASA": {"lat": -4.0547, "lon": 39.6636},
     "LAMU": {"lat": -2.2717, "lon": 40.9020},
     "DAR ES SALAAM": {"lat": -6.8235, "lon": 39.2695},
@@ -159,8 +124,6 @@ PORT_COORDINATES = {
     "ZANZIBAR": {"lat": -6.1629, "lon": 39.1919},
     "KAMPALA": {"lat": 0.3163, "lon": 32.5822}, 
     "JINJA": {"lat": 0.4244, "lon": 33.2042},
-
-    # --- 拉美 (Latin America) ---
     "GUAYAQUIL": {"lat": -2.2885, "lon": -79.9167},
     "ESMERALDAS": {"lat": 0.9856, "lon": -79.6583},
     "PUERTO LIMON": {"lat": 9.9913, "lon": -83.0240},
@@ -172,8 +135,6 @@ PORT_COORDINATES = {
     "CRISTOBAL": {"lat": 9.3499, "lon": -79.9079},
     "PUERTO QUETZAL": {"lat": 13.9167, "lon": -90.7833},
     "SANTO TOMAS DE CASTILLA": {"lat": 15.6888, "lon": -88.6086},
-    
-    # --- 中国 (China) ---
     "SHANGHAI": {"lat": 31.2304, "lon": 121.4737},
     "QINGDAO": {"lat": 36.0671, "lon": 120.3826},
     "TIANJIN": {"lat": 39.3434, "lon": 117.3616},
@@ -186,8 +147,6 @@ PORT_COORDINATES = {
     "LANSHAN": {"lat": 35.1228, "lon": 119.3496},
     "PUTIAN": {"lat": 25.4326, "lon": 119.0159},
     "YAN TIAN": {"lat": 22.575, "lon": 114.276},
-
-    # --- 东南亚/日韩/其他 ---
     "TOKYO": {"lat": 35.6762, "lon": 139.6503},
     "YOKOHAMA": {"lat": 35.4437, "lon": 139.6380},
     "OSAKA": {"lat": 34.6937, "lon": 135.5023},
@@ -206,10 +165,25 @@ PORT_COORDINATES = {
     "SURABAYA": {"lat": -7.2575, "lon": 112.7521},
     "SEMARANG": {"lat": -6.9667, "lon": 110.4167},
     "BELAWAN": {"lat": 3.7853, "lon": 98.6860},
+    "ICD WHITEFIELD": {"lat": 12.9866, "lon": 77.7499},
+    "ICD PITHAMPUR": {"lat": 22.6841, "lon": 75.8770},
+    "ICD DHANNAD": {"lat": 22.6622, "lon": 75.5684},
+    "ICD GARHI HARSARU": {"lat": 28.4357, "lon": 76.9238},
+    "ICD SANATHNAGAR": {"lat": 17.4649, "lon": 78.4355},
+    "ICD TUGHLAKABAD": {"lat": 28.5134, "lon": 77.2662},
+    "ICD MORADABAD": {"lat": 28.8683, "lon": 78.7291},
+    "ICD PANKI": {"lat": 26.4385, "lon": 80.2222},
+    "ICD PATLI": {"lat": 28.9197, "lon": 76.9200},
+    "ICD BADDI": {"lat": 29.0200, "lon": 77.0500},
+    "ICD TIMMAPUR": {"lat": 17.2000, "lon": 78.2000},
+    "ICD SACHIN": {"lat": 20.2000, "lon": 72.8000},
+    "ICD ANKLESHWAR": {"lat": 17.6800, "lon": 83.2000},
+    "ICD AJMER": {"lat": 26.4499, "lon": 74.6399},
+    "ICD NOIDA": {"lat": 28.5355, "lon": 77.3910}
 }
 
 # ==========================================
-# 6. 树种分类归属 (用于数据清洗)
+# 6. 树种分类归属
 # ==========================================
 SPECIES_CATEGORY_MAP = {
     "Softwood": ["Radiata", "Spruce", "Fir", "Pine (Gen)", "Larch", "SYP / Taeda"],
@@ -220,10 +194,16 @@ SPECIES_CATEGORY_MAP = {
 # 7. 港口代码转名称映射 (Code -> Name)
 # ==========================================
 PORT_CODE_TO_NAME = {
+    # 截图中的 Wood Chip 港口
+    "INKAK1": "Kakinada",
+    "INKRK1": "Karaikal",
+    "INMRM1": "Mormugao (Goa)",
+    "INVTZ1": "Visakhapatnam", # [Fix] 将 INVTZ1 映射为 Visakhapatnam
+    
+    # 其他常用港口
     "INMUN1": "Mundra",
     "INNSA1": "Nhava Sheva",
     "INMAA1": "Chennai",
-    "INVTZ1": "Visakhapatnam",
     "INCOK1": "Cochin",
     "INCOK4": "Cochin (ICTT)",
     "INKAT1": "Kattupalli",
@@ -233,20 +213,11 @@ PORT_CODE_TO_NAME = {
     "INHZA1": "Hazira",
     "INCCU1": "Kolkata",
     "INBOM4": "Mumbai (Air)",
+    
     # ICDs
-    "INTKD6": "ICD Tughlakabad",
-    "INWFD6": "ICD Whitefield",
-    "INCPL6": "ICD Pithampur",
-    "INDHA6": "ICD Dhannad",
-    "INGHR6": "ICD Garhi Harsaru",
-    "INSNF6": "ICD Sanathnagar",
-    "INMBD6": "ICD Moradabad",
-    "INPNK6": "ICD Panki",
-    "INPTL6": "ICD Patli",
-    "INBDM6": "ICD Baddi",
-    "INTMX6": "ICD Timmapur",
-    "INSAJ6": "ICD Sachin",
-    "INAKP6": "ICD Ankleshwar",
-    "INAJM6": "ICD Ajmer",
-    "INNDA6": "ICD Noida"
+    "INTKD6": "ICD Tughlakabad", "INWFD6": "ICD Whitefield", "INCPL6": "ICD Pithampur",
+    "INDHA6": "ICD Dhannad", "INGHR6": "ICD Garhi Harsaru", "INSNF6": "ICD Sanathnagar",
+    "INMBD6": "ICD Moradabad", "INPNK6": "ICD Panki", "INPTL6": "ICD Patli",
+    "INBDM6": "ICD Baddi", "INTMX6": "ICD Timmapur", "INSAJ6": "ICD Sachin",
+    "INAKP6": "ICD Ankleshwar", "INAJM6": "ICD Ajmer", "INNDA6": "ICD Noida"
 }

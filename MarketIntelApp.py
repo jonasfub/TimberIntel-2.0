@@ -77,16 +77,14 @@ if start_d and end_d:
     if st.button("📊 加载分析报告 (Load Analysis Report)", type="primary"):
         all_rows = []
         
-        # [优化 1] 减小 batch_size 防止超时
+        # [优化] 减小 batch_size 防止超时
         batch_size = 5000 
         page = 0
         max_pages = 100 
         
-        # [优化 2] 明确指定需要的列 (含 importer_name)
         needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,exporter_name,importer_name"
         
         with st.status("🚀 初始化提取任务...", expanded=True) as status:
-            # [优化 3] 创建占位符，实现动态单行刷新
             msg_placeholder = st.empty()
             progress_bar = st.progress(0)
             
@@ -95,11 +93,9 @@ if start_d and end_d:
                     range_start = page * batch_size
                     range_end = range_start + batch_size - 1
                     
-                    # 动态更新文字
                     msg_placeholder.info(f"🔄 正在提取第 {page+1} 批数据 (Offset {range_start})...")
                     status.update(label=f"正在运行: 已获取 {len(all_rows)} 条记录...")
                     
-                    # 执行查询
                     response = utils.supabase.table('trade_records')\
                         .select(needed_columns)\
                         .gte('transaction_date', start_d).lte('transaction_date', end_d)\
@@ -111,19 +107,15 @@ if start_d and end_d:
                     
                     all_rows.extend(rows)
                     
-                    # 简单更新进度条
                     if page < 50: progress_bar.progress((page + 1) / 50)
-                    
                     if len(rows) < batch_size: break
                     page += 1
                 
-                # 清理 UI
                 progress_bar.empty()
                 msg_placeholder.empty()
                 
                 status.update(label=f"✅ 提取完成: 共 {len(all_rows)} 条记录", state="complete")
                 
-                # 存入 Session State
                 if all_rows:
                     st.session_state['analysis_df'] = pd.DataFrame(all_rows)
                     st.session_state['report_active'] = True
@@ -141,8 +133,26 @@ if start_d and end_d:
 if st.session_state.get('report_active', False) and not st.session_state['analysis_df'].empty:
     df = st.session_state['analysis_df']
 
-    # --- [NEW] 港口名称映射逻辑 ---
-    # 在所有图表渲染前，把 INMUN1 替换为 Mundra
+    # --- [关键优化] 港口名称映射逻辑 ---
+    
+    # 1. 强力清洗：提取括号内的代码
+    #    "VIZAG SEA (INVTZ1)" -> "INVTZ1"
+    #    "Mundra" -> "Mundra" (不变)
+    df['port_of_arrival'] = df['port_of_arrival'].fillna('Unknown').astype(str).apply(
+        lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in x else x.strip()
+    )
+
+    # 2. 兜底替换：直接修正名称 (针对没有代码的情况)
+    #    万一数据是 "VIZAG SEA" 而没有代码，这里直接替换
+    name_fix_map = {
+        "VIZAG": "Visakhapatnam",
+        "VIZAG SEA": "Visakhapatnam",
+        "GOA": "Mormugao (Goa)",
+        "GOA PORT": "Mormugao (Goa)"
+    }
+    df['port_of_arrival'] = df['port_of_arrival'].replace(name_fix_map)
+
+    # 3. 应用标准代码映射表：INVTZ1 -> Visakhapatnam
     if hasattr(config, 'PORT_CODE_TO_NAME'):
         df['port_of_arrival'] = df['port_of_arrival'].replace(config.PORT_CODE_TO_NAME)
     
@@ -163,7 +173,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         df['Species'] = 'Unknown'
 
     # ========================================================
-    # 🔥 自动清洗脏数据 (Smart Cleaning Logic)
+    # 🔥 自动清洗脏数据
     # ========================================================
     current_category_type = None
     if "Softwood" in selected_category:
@@ -195,7 +205,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         # 3. 计算指标
         df['unit_price'] = df.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 and pd.notnull(x['total_value_usd']) else 0, axis=1)
         
-        # 4. 映射国家全名 (纯英文)
+        # 4. 映射国家全名
         def get_country_name_en(code):
             full_name = config.COUNTRY_NAME_MAP.get(code, code)
             if '(' in full_name: return full_name.split(' (')[0]
@@ -218,7 +228,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
 
         # ============================================
-        # 1. 数量趋势 (Quantity Trends)
+        # 1. 数量趋势
         # ============================================
         st.subheader("📈 数量趋势 (Volume Trends)")
         r1_c1, r1_c2 = st.columns(2)
@@ -246,7 +256,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
         
         # ============================================
-        # 2. 金额趋势与结构 (USD)
+        # 2. 金额趋势与结构
         # ============================================
         st.subheader("💰 金额趋势与结构 (Value Trends & Structure)")
         r2_c1, r2_c2 = st.columns(2)
@@ -274,7 +284,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
 
         # ============================================
-        # 3. 价格分析 (Price Analysis - USD)
+        # 3. 价格分析
         # ============================================
         st.subheader("🏷️ 价格分析 (Price Analysis)")
         
@@ -331,11 +341,10 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
 
         # ============================================
-        # 4. 贸易商排名 (Top Traders - by Value USD)
+        # 4. 贸易商排名
         # ============================================
         st.subheader("🏆 贸易商排名 (Top Traders - by Value USD)")
         
-        # 简单的数据清洗
         if 'importer_name' not in df.columns:
             df['importer_name'] = 'Unknown'
             
@@ -345,7 +354,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         trader_c1, trader_c2 = st.columns(2)
         
         with trader_c1:
-            # Top Exporters (按金额 USD)
             top_exporters = df.groupby('exporter_name')['total_value_usd'].sum().nlargest(10).sort_values(ascending=True).reset_index()
             fig_exp = px.bar(
                 top_exporters, y="exporter_name", x="total_value_usd", 
@@ -359,7 +367,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             st.plotly_chart(fig_exp, use_container_width=True)
             
         with trader_c2:
-            # Top Buyers (按金额 USD)
             top_importers = df.groupby('importer_name')['total_value_usd'].sum().nlargest(10).sort_values(ascending=True).reset_index()
             fig_imp = px.bar(
                 top_importers, y="importer_name", x="total_value_usd", 
@@ -375,7 +382,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
 
         # ============================================
-        # 5. 港口分析 (Port Analysis)
+        # 5. 港口分析
         # ============================================
         st.subheader("⚓ 港口分析 (Port Analysis)")
         
@@ -478,7 +485,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         # 详情表
         st.subheader("📋 详细数据 (Details)")
         
-        # [NEW] 加上 unit_price, importer_name
         cols = ['transaction_date', 'hs_code', 'Species', 'origin_name', 'dest_name', 'port_of_arrival', 'quantity', 'quantity_unit', 'total_value_usd', 'unit_price', 'exporter_name', 'importer_name']
         final_cols = [c for c in cols if c in df.columns]
         st.dataframe(df[final_cols], use_container_width=True)
