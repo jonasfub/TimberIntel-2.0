@@ -60,22 +60,22 @@ with st.container():
     with c1:
         # 1. 默认清空（即全选）
         target_units = st.multiselect(
-            "1️⃣ 包含的单位 (多选)", 
+            "1️⃣ 包含的单位 (多选) / Included Units", 
             raw_units, 
-            default=[], # 默认为空
+            default=[], 
             placeholder="留空即全选 (Select All)",
             help="留空表示不过滤单位（显示所有）。如果只想看 M3，请手动选择。"
         )
         
     with c2:
-        min_price = st.number_input("2️⃣ 最低单价清洗 ($)", value=0.0, step=1.0, help="设为 0 可查看所有数据")
+        min_price = st.number_input("2️⃣ 最低单价清洗 ($) / Min Price Filter", value=0.0, step=1.0, help="设为 0 可查看所有数据")
     
     with c3:
         # 2. 默认按金额 (Value) -> index=1
         measure_metric = st.radio(
             "3️⃣ 分析指标 (Metric)", 
             ["Volume (数量)", "Value (金额 USD)"], 
-            index=1, # 默认选中第二个选项
+            index=1, 
             horizontal=True
         )
         y_col = 'quantity' if "Volume" in measure_metric else 'total_value_usd'
@@ -90,7 +90,7 @@ with st.container():
     if target_units:
         df_clean = df[df['quantity_unit'].isin(target_units)].copy()
     else:
-        df_clean = df.copy() # 为空则不筛选 = 全选
+        df_clean = df.copy() 
 
     df_clean['calc_price'] = df_clean.apply(lambda x: x['total_value_usd']/x['quantity'] if x['quantity'] > 0 else 0, axis=1)
     df_clean = df_clean[df_clean['calc_price'] >= min_price]
@@ -117,7 +117,7 @@ st.divider()
 # ==========================================
 # 📊 1. Monthly Trend: Logs vs Lumber
 # ==========================================
-st.subheader("📈 1. Monthly Trend: Logs vs Lumber (Single Country)")
+st.subheader("📈 1. 月度进口趋势：原木 vs 板材 (Monthly Trend: Logs vs Lumber)")
 st.caption("选择一个国家，查看其 Logs (原木) 与 Lumber (板材) 的月度进口趋势。")
 
 # 筛选出只有 Logs 和 Lumber 的数据
@@ -154,7 +154,7 @@ if not df_form.empty:
                 y=y_col,
                 color='Product_Form',
                 barmode='group',
-                title=f"{target_country} - Monthly Logs vs Lumber Trend ({measure_metric})",
+                title=f"{target_country} - 月度进口趋势 (Monthly Logs vs Lumber Trend)",
                 color_discrete_map={'Logs': '#FF6B6B', 'Lumber': '#4ECDC4'}, 
                 text_auto='.2s'
             )
@@ -170,16 +170,14 @@ st.divider()
 # ==========================================
 # 📊 2. Industrial Form: Logs vs Lumber (Snapshot)
 # ==========================================
-st.subheader("🏭 2. Industrial Form: Logs vs Lumber (Snapshot)")
+st.subheader("🏭 2. 产业形态对比：原木 vs 板材 (Industrial Form: Logs vs Lumber)")
 st.caption("对比各国在 **Softwood (软木)** 和 **Hardwood (硬木)** 领域的进口形态差异。")
 
 if not df_form.empty:
     all_dests = df_form.groupby('dest_name')[y_col].sum().sort_values(ascending=False).index.tolist()
     
     # 3. 默认选中 6 个国家
-    # 取交集：确保默认的国家确实存在于数据中，防止报错
     default_dests = [c for c in DEFAULT_ASIA_MARKETS if c in all_dests]
-    # 如果交集为空（比如数据里没有这些国家），则默认选 Top 6
     if not default_dests:
         default_dests = all_dests[:6]
     
@@ -189,13 +187,13 @@ if not df_form.empty:
     col_soft, col_hard = st.columns(2)
     
     with col_soft:
-        st.markdown("#### 🌲 Softwood")
+        st.markdown("#### 🌲 Softwood (软木)")
         df_soft = df_form_final[df_form_final['Wood_Type'] == 'Softwood']
         if not df_soft.empty:
             chart_soft = df_soft.groupby(['dest_name', 'Product_Form'])[y_col].sum().reset_index()
             fig_soft = px.bar(
                 chart_soft, x='dest_name', y=y_col, color='Product_Form',
-                title=f"Softwood: Logs vs Lumber ({measure_metric})", barmode='group', 
+                title=f"Softwood: 原木 vs 板材 (Logs vs Lumber)", barmode='group', 
                 color_discrete_map={'Logs': '#8B4513', 'Lumber': '#DEB887'}, text_auto='.2s'
             )
             st.plotly_chart(fig_soft, use_container_width=True)
@@ -203,13 +201,13 @@ if not df_form.empty:
             st.info("无 Softwood 数据")
 
     with col_hard:
-        st.markdown("#### 🌳 Hardwood")
+        st.markdown("#### 🌳 Hardwood (硬木)")
         df_hard = df_form_final[df_form_final['Wood_Type'] == 'Hardwood']
         if not df_hard.empty:
             chart_hard = df_hard.groupby(['dest_name', 'Product_Form'])[y_col].sum().reset_index()
             fig_hard = px.bar(
                 chart_hard, x='dest_name', y=y_col, color='Product_Form',
-                title=f"Hardwood: Logs vs Lumber ({measure_metric})", barmode='group',
+                title=f"Hardwood: 原木 vs 板材 (Logs vs Lumber)", barmode='group',
                 color_discrete_map={'Logs': '#2E8B57', 'Lumber': '#98FB98'}, text_auto='.2s'
             )
             st.plotly_chart(fig_hard, use_container_width=True)
@@ -223,7 +221,7 @@ st.divider()
 # ==========================================
 # 📊 3. Cross Market: 进口国采购结构对比
 # ==========================================
-st.subheader("🌏 3. Cross Market: 进口国采购结构对比")
+st.subheader("🌏 3. 市场结构分析：进口国采购偏好 (Market Structure: Import Preferences)")
 st.caption("分析不同国家的采购偏好 (已隐藏 'Other' 树种)")
 
 if not df_clean.empty:
@@ -263,7 +261,7 @@ if not df_clean.empty:
                     x='dest_name' if orientation_1 == 'v' else y_col,
                     y=y_col if orientation_1 == 'v' else 'dest_name',
                     color='Species',
-                    title=f"进口国采购结构 ({measure_metric})",
+                    title=f"进口国采购结构 (Import Structure by Country)",
                     barmode=barmode_1,
                     orientation=orientation_1,
                     text_auto='.2s',
@@ -282,7 +280,7 @@ st.divider()
 # ==========================================
 # 📊 4. Cross Product: 树种流向对比
 # ==========================================
-st.subheader("🌲 4. Cross Product: 树种流向对比")
+st.subheader("🌲 4. 产品流向分析：树种市场分布 (Product Flow: Species Distribution)")
 st.caption("分析不同树种的市场分布 (已隐藏 'Other' 树种)")
 
 if not df_clean.empty:
@@ -294,7 +292,7 @@ if not df_clean.empty:
         # 5. 默认选中 6 个国家
         default_dests_prod = [c for c in DEFAULT_ASIA_MARKETS if c in all_dests_prod]
         if not default_dests_prod:
-            default_dests_prod = [] # 如果这些国家都没数据，就默认为空（全球）
+            default_dests_prod = [] 
             
         c_sel_prod, _ = st.columns([2, 1])
         with c_sel_prod:
@@ -309,11 +307,10 @@ if not df_clean.empty:
         # 应用筛选
         if selected_dests_prod:
             df_product_view = df_no_other_prod[df_no_other_prod['dest_name'].isin(selected_dests_prod)]
-            chart_title = f"Top 15 树种流向 - 销往 {', '.join(selected_dests_prod[:3])}"
-            if len(selected_dests_prod) > 3: chart_title += "..."
+            chart_title_suffix = f"销往: {', '.join(selected_dests_prod[:3])}..." if len(selected_dests_prod) > 3 else f"销往: {', '.join(selected_dests_prod)}"
         else:
             df_product_view = df_no_other_prod
-            chart_title = "Top 15 树种流向 - Global Markets"
+            chart_title_suffix = "全球市场 (Global Markets)"
 
         if not df_product_view.empty:
             # Top 15 树种
@@ -334,7 +331,7 @@ if not df_clean.empty:
                     x='Species',
                     y=y_col,
                     color='dest_name',
-                    title=f"{chart_title} ({measure_metric})",
+                    title=f"Top 15 树种流向 - {chart_title_suffix}",
                     barmode=barmode_2 if not show_percent else 'relative', 
                     text_auto='.2s'
                 )
@@ -358,7 +355,7 @@ st.divider()
 # ==========================================
 # 📊 5. Market-Product Matrix (热力图)
 # ==========================================
-st.subheader("🔥 5. Market-Product Matrix (热力图)")
+st.subheader("🔥 5. 市场-产品热力矩阵 (Market-Product Heatmap Matrix)")
 st.caption("(已隐藏 'Other' 树种)")
 
 if not df_clean.empty:
@@ -381,7 +378,7 @@ if not df_clean.empty:
             z=y_col, 
             text_auto='.2s',
             color_continuous_scale="Viridis",
-            title=f"采购热度矩阵 (Top 15 Countries x Top 15 Species) - {measure_metric}"
+            title=f"采购热度矩阵 (Top 15 Countries x Top 15 Species)"
         )
         st.plotly_chart(fig3, use_container_width=True)
     else:
