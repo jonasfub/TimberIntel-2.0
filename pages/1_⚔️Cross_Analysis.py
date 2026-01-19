@@ -275,29 +275,30 @@ if not df_clean.empty:
     df_no_other_prod = df_clean[df_clean['Species'] != 'Other']
     
     if not df_no_other_prod.empty:
-        # 🆕 1. 增加【出口国 (Origin)】筛选器
-        all_origins = df_no_other_prod.groupby('origin_name')[y_col].sum().sort_values(ascending=False).index.tolist()
+        # 🆕 [已修改] 筛选器改为：进口国 (Destination)
+        all_dests_prod = df_no_other_prod.groupby('dest_name')[y_col].sum().sort_values(ascending=False).index.tolist()
         
-        c_sel_org, _ = st.columns([2, 1])
-        with c_sel_org:
-            selected_origins = st.multiselect(
-                "🔍 筛选出口国 (Filter Origin - Optional, leave empty for All)", 
-                all_origins,
+        c_sel_prod, _ = st.columns([2, 1])
+        with c_sel_prod:
+            selected_dests_prod = st.multiselect(
+                "🔍 筛选进口国 (Filter Destination - Optional, leave empty for All)", 
+                all_dests_prod,
                 default=[],
-                help="选择特定出口国（如 New Zealand），查看该国的树种都卖到了哪里。"
+                key="sel_prod_dest", # 必须有独立 Key
+                help="选择特定进口国（如 China），查看该国主要进口的树种结构。"
             )
 
         # 应用筛选
-        if selected_origins:
-            df_product_view = df_no_other_prod[df_no_other_prod['origin_name'].isin(selected_origins)]
-            chart_title = f"Top 15 树种流向 - 来自 {', '.join(selected_origins[:3])}"
-            if len(selected_origins) > 3: chart_title += "..."
+        if selected_dests_prod:
+            df_product_view = df_no_other_prod[df_no_other_prod['dest_name'].isin(selected_dests_prod)]
+            chart_title = f"Top 15 树种流向 - 销往 {', '.join(selected_dests_prod[:3])}"
+            if len(selected_dests_prod) > 3: chart_title += "..."
         else:
             df_product_view = df_no_other_prod
-            chart_title = "Top 15 树种流向 - Global (All Origins)"
+            chart_title = "Top 15 树种流向 - Global Markets"
 
         if not df_product_view.empty:
-            # 🆕 2. 增加到 Top 15 树种
+            # Top 15 树种
             top_species = df_product_view.groupby('Species')[y_col].sum().nlargest(15).index.tolist()
             df_product_view = df_product_view[df_product_view['Species'].isin(top_species)]
 
@@ -328,7 +329,7 @@ if not df_clean.empty:
                     
                 st.plotly_chart(fig2, use_container_width=True)
         else:
-            st.info("所选出口国无数据")
+            st.info("所选进口国无数据")
     else:
         st.info("过滤 'Other' 后无数据")
 else:
