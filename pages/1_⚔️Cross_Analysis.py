@@ -18,6 +18,9 @@ if 'analysis_df' not in st.session_state or st.session_state['analysis_df'].empt
 # 获取数据
 df = st.session_state['analysis_df'].copy()
 
+# --- 定义默认国家列表 (亚洲六国) ---
+DEFAULT_ASIA_MARKETS = ["China", "India", "Vietnam", "Thailand", "Malaysia", "Indonesia"]
+
 # --- 2. 基础数据清洗 ---
 def get_country_name_en(code):
     full_name = config.COUNTRY_NAME_MAP.get(code, code)
@@ -55,29 +58,30 @@ with st.container():
     raw_units = df['quantity_unit'].fillna('Unknown').unique().tolist()
     
     with c1:
-        m3_aliases = [u for u in raw_units if str(u).upper() in ['M3', 'MTQ', 'CBM', 'M3 ']]
-        default_sel = m3_aliases if m3_aliases else (raw_units[:1] if raw_units else [])
-        
+        # 1. 默认清空（即全选）
         target_units = st.multiselect(
             "1️⃣ 包含的单位 (多选)", 
             raw_units, 
-            default=default_sel,
-            help="如果某些国家的数据未显示，可能是因为它们的单位（如 KGM 或 Unknown）未被选中。"
+            default=[], # 默认为空
+            placeholder="留空即全选 (Select All)",
+            help="留空表示不过滤单位（显示所有）。如果只想看 M3，请手动选择。"
         )
         
     with c2:
         min_price = st.number_input("2️⃣ 最低单价清洗 ($)", value=0.0, step=1.0, help="设为 0 可查看所有数据")
     
     with c3:
+        # 2. 默认按金额 (Value) -> index=1
         measure_metric = st.radio(
             "3️⃣ 分析指标 (Metric)", 
             ["Volume (数量)", "Value (金额 USD)"], 
+            index=1, # 默认选中第二个选项
             horizontal=True
         )
         y_col = 'quantity' if "Volume" in measure_metric else 'total_value_usd'
         
         if "Volume" in measure_metric:
-            unit_str = ",".join([str(u) for u in target_units]) if target_units else "None"
+            unit_str = ",".join([str(u) for u in target_units]) if target_units else "All Units"
             y_title = f"Total Volume ({unit_str})"
         else:
             y_title = "Total USD"
@@ -86,7 +90,7 @@ with st.container():
     if target_units:
         df_clean = df[df['quantity_unit'].isin(target_units)].copy()
     else:
-        df_clean = df.copy() 
+        df_clean = df.copy() # 为空则不筛选 = 全选
 
     df_clean['calc_price'] = df_clean.apply(lambda x: x['total_value_usd']/x['quantity'] if x['quantity'] > 0 else 0, axis=1)
     df_clean = df_clean[df_clean['calc_price'] >= min_price]
@@ -171,7 +175,13 @@ st.caption("对比各国在 **Softwood (软木)** 和 **Hardwood (硬木)** 领�
 
 if not df_form.empty:
     all_dests = df_form.groupby('dest_name')[y_col].sum().sort_values(ascending=False).index.tolist()
-    default_dests = all_dests[:8]
+    
+    # 3. 默认选中 6 个国家
+    # 取交集：确保默认的国家确实存在于数据中，防止报错
+    default_dests = [c for c in DEFAULT_ASIA_MARKETS if c in all_dests]
+    # 如果交集为空（比如数据里没有这些国家），则默认选 Top 6
+    if not default_dests:
+        default_dests = all_dests[:6]
     
     selected_dests_form = st.multiselect("选择对比国家 (Select Countries)", all_dests, default=default_dests, key="sel_form_country")
     df_form_final = df_form[df_form['dest_name'].isin(selected_dests_form)]
@@ -221,7 +231,11 @@ if not df_clean.empty:
     
     if not df_no_other_mkt.empty:
         all_dests_mkt = df_no_other_mkt.groupby('dest_name')[y_col].sum().sort_values(ascending=False).index.tolist()
-        default_dests_mkt = all_dests_mkt[:10]
+        
+        # 4. 默认选中 6 个国家
+        default_dests_mkt = [c for c in DEFAULT_ASIA_MARKETS if c in all_dests_mkt]
+        if not default_dests_mkt:
+            default_dests_mkt = all_dests_mkt[:6]
         
         c_sel_mkt, _ = st.columns([2, 1])
         with c_sel_mkt:
@@ -275,17 +289,21 @@ if not df_clean.empty:
     df_no_other_prod = df_clean[df_clean['Species'] != 'Other']
     
     if not df_no_other_prod.empty:
-        # 🆕 [已修改] 筛选器改为：进口国 (Destination)
         all_dests_prod = df_no_other_prod.groupby('dest_name')[y_col].sum().sort_values(ascending=False).index.tolist()
         
+        # 5. 默认选中 6 个国家
+        default_dests_prod = [c for c in DEFAULT_ASIA_MARKETS if c in all_dests_prod]
+        if not default_dests_prod:
+            default_dests_prod = [] # 如果这些国家都没数据，就默认为空（全球）
+            
         c_sel_prod, _ = st.columns([2, 1])
         with c_sel_prod:
             selected_dests_prod = st.multiselect(
-                "🔍 筛选进口国 (Filter Destination - Optional, leave empty for All)", 
+                "🔍 筛选进口国 (Filter Destination)", 
                 all_dests_prod,
-                default=[],
-                key="sel_prod_dest", # 必须有独立 Key
-                help="选择特定进口国（如 China），查看该国主要进口的树种结构。"
+                default=default_dests_prod,
+                key="sel_prod_dest",
+                help="选择特定进口国，查看该国主要进口的树种结构。留空显示全球。"
             )
 
         # 应用筛选
