@@ -20,7 +20,10 @@ with st.sidebar:
     # 自动获取 Token
     token = utils.get_auto_token()
     if token:
-        remaining = int((st.session_state['token_expiry'] - time.time()) / 60)
+        # 简单计算剩余时间
+        expiry = st.session_state.get('token_expiry', time.time())
+        remaining = int((expiry - time.time()) / 60)
+        if remaining < 0: remaining = 0
         st.success(f"✅ API Connected (剩余 {remaining} min)")
     else:
         st.error("❌ Connection Failed (连接失败)")
@@ -55,64 +58,93 @@ final_dirs = selected_dirs if selected_dirs else ["imports", "exports"]
 # --- 关键词生成逻辑 ---
 api_keyword_str = None
 if dl_species:
-    # 提取选中树种的第一个关键词，作为 API 搜索词
     kws = []
     for s in dl_species:
         if s in config.SPECIES_KEYWORDS:
-            # 取该树种配置列表中的第一个词 (例如 Radiata -> RADIATA)
             kws.append(config.SPECIES_KEYWORDS[s][0])
     
     if len(kws) > 1:
-        # 如果选了多个，用空格连接。警告用户 API 可能将其视为 AND 关系
         api_keyword_str = " ".join(kws)
         st.warning(f"⚠️ Multi-Species Filter: Searching for '{api_keyword_str}'. (API likely treats this as 'AND' logic. For volume check, recommend selecting ONE species at a time.)")
     elif kws:
-        # 单个选择，正常搜索
         api_keyword_str = kws[0]
         st.success(f"🧬 Species Filter Active: '{api_keyword_str}' (Will be applied to API requests)")
 
 st.divider()
 
-# --- 1. 本地库存检查 ---
+# ========================================================
+# 1. [核心更新] 本地库存检查 (Local Stock Check) - 支持日期范围
+# ========================================================
 st.markdown("#### 1️⃣ Local Stock Check (本地库存检查)")
 
-c_inv_yr, c_inv_btn = st.columns([1, 2])
-with c_inv_yr:
-    check_year = st.selectbox("Select Year (选择年份)", [2024, 2025, 2026], index=2, key="check_year_box")
+# 改为两列：日期选择 + 按钮
+c_inv_date, c_inv_btn = st.columns([2, 1])
+
+with c_inv_date:
+    # 默认查看过去 30 天
+    default_start = datetime.today() - timedelta(days=30)
+    default_end = datetime.today()
+    
+    check_range = st.date_input(
+        "📅 Select Date Range (选择检查范围)", 
+        value=(default_start, default_end), 
+        key="stock_check_date_range",
+        help="对于印度等数据量巨大的国家，请尽量缩小日期范围（如只查最近1个月），以防止数据库查询超时。"
+    )
 
 with c_inv_btn:
     st.write("") 
     st.write("") 
-    if st.button("📊 Show Heatmap (显示库存热力图)"):
+    # 只有选好日期才能点
+    if st.button("📊 Show Heatmap (显示库存热力图)", type="secondary"):
         st.session_state['show_heatmap'] = True
         st.rerun()
 
+# 渲染热力图逻辑
 if st.session_state.get('show_heatmap', False):
     st.divider()
-    check_start = f"{check_year}-01-01"
-    check_end = f"{check_year}-12-31"
-    sp_msg = f"Species: {dl_species}" if dl_species else "Species: All"
     
-    with st.spinner(f"Scanning Database for {check_year}... (正在扫描数据库)"):
-        # 本地检查依然使用精确的 Python 逻辑
-        coverage_df = utils.check_data_coverage(final_hs, check_start, check_end, origin_codes=dl_origins, dest_codes=dl_dests, target_species_list=dl_species)
-        
-        if not coverage_df.empty:
-            full_range = pd.date_range(start=check_start, end=check_end)
-            full_df = pd.DataFrame({'date': full_range}).merge(coverage_df, on='date', how='left').fillna(0)
-            
-            fig = px.scatter(
-                full_df, x="date", y=[1]*len(full_df), 
-                size="count", color="count", 
-                color_continuous_scale=["#e0e0e0", "green"], 
-                title=f"Stock Distribution {check_year} (库存分布) | Total: {coverage_df['count'].sum()} records", 
-                height=250
+    # 处理日期范围
+    check_start, check_end = None, None
+    if isinstance(check_range, tuple):
+        if len(check_range) == 2:
+            check_start, check_end = check_range
+        elif len(check_range) == 1:
+            check_start = check_range[0]
+            check_end = check_range[0]
+    
+    if check_start and check_end:
+        with st.spinner(f"Scanning Database from {check_start} to {check_end}..."):
+            # 调用 utils 里的智能检查函数
+            coverage_df = utils.check_data_coverage(
+                final_hs, 
+                str(check_start), 
+                str(check_end), 
+                origin_codes=dl_origins, 
+                dest_codes=dl_dests, 
+                target_species_list=dl_species
             )
-            fig.update_yaxes(visible=False, showticklabels=False)
-            fig.update_layout(plot_bgcolor='white', xaxis=dict(showgrid=False))
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning(f"⚠️ No Data found for {check_year} (该年份无数据)")
+            
+            if not coverage_df.empty:
+                # 补全日期确保图表连续
+                full_range = pd.date_range(start=check_start, end=check_end)
+                full_df = pd.DataFrame({'date': full_range}).merge(coverage_df, on='date', how='left').fillna(0)
+                
+                # 渲染图表
+                fig = px.scatter(
+                    full_df, x="date", y=[1]*len(full_df), 
+                    size="count", color="count", 
+                    color_continuous_scale=["#e0e0e0", "green"], 
+                    title=f"Stock Heatmap ({check_start} ~ {check_end}) | Total: {int(coverage_df['count'].sum())} records", 
+                    height=250
+                )
+                fig.update_yaxes(visible=False, showticklabels=False)
+                fig.update_layout(plot_bgcolor='white', xaxis=dict(showgrid=False))
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning(f"⚠️ No Data found between {check_start} and {check_end} (该时间段无数据)")
+    else:
+        st.error("请选择完整的起始和结束日期")
     
     if st.button("❌ Close Chart (关闭图表)"):
         st.session_state['show_heatmap'] = False
@@ -140,7 +172,12 @@ if st.button("🔍 Check Volume (查询数据量)"):
                     if count == 0: count = data_node.get('totalElements', 0)
                     results.append({"HS Code": hs, "Flow": d, "API Count": count})
                     total_count += count
-                else: results.append({"HS Code": hs, "Flow": d, "API Count": "Error"})
+                else:
+                    # 显示具体的错误信息
+                    error_msg = res.get('msg', 'Unknown Error') if res else 'No Response'
+                    error_code = res.get('code', 'N/A') if res else 'N/A'
+                    results.append({"HS Code": hs, "Flow": d, "API Count": f"Err {error_code}: {error_msg}"})
+                    
         status.update(label="Complete (完成)", state="complete")
         if results:
             st.table(pd.DataFrame(results))
@@ -149,13 +186,12 @@ if st.button("🔍 Check Volume (查询数据量)"):
 # --- 3. 执行下载 (包含断点续传逻辑) ---
 st.markdown("#### 3️⃣ Execute Download (执行下载)")
 
-# [NEW] 布局调整：增加起始页输入框
 c_exec1, c_exec2 = st.columns([1, 4])
 with c_exec1:
-    start_page_val = st.number_input("Start Page (起始页码)", min_value=1, value=1, help="用于断点续传。注意：此页码将应用于所有选中的 HS Code，建议续传时只勾选单个任务。")
+    start_page_val = st.number_input("Start Page (起始页码)", min_value=1, value=1, help="用于断点续传。")
 with c_exec2:
-    st.write("") # Spacer
-    st.write("") # Spacer
+    st.write("") 
+    st.write("") 
     start_btn = st.button("🚀 Start Download (开始下载 - 自动翻页)", type="primary")
 
 if start_btn:
@@ -168,7 +204,6 @@ if start_btn:
             for d in final_dirs:
                 current_op += 1; progress_bar.progress(int(current_op/total_ops*100))
                 
-                # [NEW] 使用用户定义的起始页
                 page = start_page_val
                 if page > 1:
                     log_box.info(f"⏭️ Resuming {hs} ({d}) from Page {page}...")
@@ -177,7 +212,6 @@ if start_btn:
                 total_saved_for_this_hs = 0
                 
                 while has_more_data:
-                    # 调用 utils, 传入 keyword
                     res = utils.fetch_tendata_api(hs, dl_date_range[0], dl_date_range[1], token, d, dl_origins, dl_dests, just_checking=False, page_no=page, keyword=api_keyword_str)
                     if res and str(res.get('code')) == '200':
                         saved_count, api_count = utils.save_to_supabase(res) # 调用 utils
@@ -187,7 +221,8 @@ if start_btn:
                         if api_count < 50: has_more_data = False
                         else: page += 1; time.sleep(0.3)
                     else:
-                        log_box.error(f"HS {hs}: Error"); has_more_data = False
+                        err_msg = res.get('msg', 'Unknown') if res else 'No Resp'
+                        log_box.error(f"HS {hs}: Error - {err_msg}"); has_more_data = False
                 
                 if total_saved_for_this_hs > 0: log_box.success(f"✅ HS {hs} ({d}) Done: Saved {total_saved_for_this_hs}")
                 else: log_box.warning(f"HS {hs} ({d}): No Data")
