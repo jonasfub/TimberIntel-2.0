@@ -1,271 +1,231 @@
 import streamlit as st
 import pandas as pd
-import requests
 import time
-from supabase import create_client, Client
-import config  # 引用你的配置
+import plotly.express as px
+from datetime import datetime, timedelta
+import config
+import utils # 引用公共库
 
-# --- 核心配置 ---
-# ⚠️ 请确保这里的 URL 和 Key 是正确的
-SUPABASE_URL = "https://ajfmhcustdzdmcbgowgx.supabase.co"
-SUPABASE_KEY = "sb_secret_UdSZUH99OqFQ0Irca_LUWg_a7Sp-j_7"
-TENDATA_API_KEY = "42127b0db5597b4a0d7063b99900c0eb"
+st.set_page_config(page_title="Data Download / 批量下载", page_icon="🚀", layout="wide")
 
-# --- 1. 数据库连接 (使用缓存，避免重复连接) ---
-@st.cache_resource
-def init_supabase():
-    try:
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception as e:
-        st.error(f"❌ 数据库连接失败: {e}")
-        return None
+st.title("🚀 Batch Download Center (批量下载中心)")
 
-supabase = init_supabase()
+# 初始化状态
+if 'show_heatmap' not in st.session_state:
+    st.session_state['show_heatmap'] = False
 
-# --- 2. 自动 Token 管理 (包含自动刷新逻辑) ---
-def get_auto_token(force_refresh=False):
-    """
-    获取 Token。
-    :param force_refresh: 如果为 True，将忽略缓存，强制向 API 请求新 Token
-    """
-    # 如果不是强制刷新，且 Session 中有不过期的 Token，直接返回
-    if not force_refresh and 'access_token' in st.session_state and 'token_expiry' in st.session_state:
-        # 预留 60 秒缓冲期
-        if time.time() < st.session_state['token_expiry']:
-            return st.session_state['access_token']
+# --- 侧边栏 (独立于主页) ---
+with st.sidebar:
+    st.header("⚙️ Settings (参数设置)")
+    # 自动获取 Token
+    token = utils.get_auto_token()
+    if token:
+        # 简单计算剩余时间
+        expiry = st.session_state.get('token_expiry', time.time())
+        remaining = int((expiry - time.time()) / 60)
+        if remaining < 0: remaining = 0
+        st.success(f"✅ API Connected (剩余 {remaining} min)")
+    else:
+        st.error("❌ Connection Failed (连接失败)")
+        
+    st.divider()
+    selected_category = st.selectbox("Product Group (产品分类)", list(config.HS_CODES_MAP.keys()))
+    target_hs_codes = config.HS_CODES_MAP[selected_category]
 
-    # --- 请求新 Token ---
-    auth_url = "https://open-api.tendata.cn/v2/access-token" 
-    params = { "apiKey": TENDATA_API_KEY }
+# --- 界面 ---
+st.markdown("### 🛠️ Task Configuration (任务配置)")
+
+c_dl1, c_dl2 = st.columns(2)
+with c_dl1: 
+    st.caption("Quick Select - Origin (快捷选择-出口国):")
+    utils.render_region_buttons("dl_o", c_dl1)
+    dl_origins = st.multiselect("Exporting Countries (出口国)", utils.get_all_country_codes(), format_func=utils.country_format_func, key="dl_o")
+with c_dl2: 
+    st.caption("Quick Select - Dest (快捷选择-进口国):")
+    utils.render_region_buttons("dl_d", c_dl2)
+    dl_dests = st.multiselect("Importing Countries (进口国)", utils.get_all_country_codes(), format_func=utils.country_format_func, key="dl_d")
+
+c_api1, c_api2, c_api3 = st.columns(3)
+with c_api1: selected_hs = st.multiselect("HS Codes (海关编码)", target_hs_codes, key="dl_h")
+with c_api2: 
+    species_options = list(config.SPECIES_KEYWORDS.keys()) + ["Other", "Unknown"]
+    dl_species = st.multiselect("Species Filter (树种 - API筛选)", species_options, key="dl_sp", help="选中后，API请求将只返回包含这些树种关键词的数据。")
+with c_api3: selected_dirs = st.multiselect("Trade Flow (贸易方向)", ["imports", "exports"], key="dl_dr")
+
+final_hs = selected_hs if selected_hs else target_hs_codes
+final_dirs = selected_dirs if selected_dirs else ["imports", "exports"]
+
+# --- 关键词生成逻辑 ---
+api_keyword_str = None
+if dl_species:
+    kws = []
+    for s in dl_species:
+        if s in config.SPECIES_KEYWORDS:
+            kws.append(config.SPECIES_KEYWORDS[s][0])
     
-    try:
-        res = requests.get(auth_url, params=params)
-        res_json = res.json()
-        if str(res_json.get('code')) == '200':
-            token_data = res_json.get('data', {})
-            new_token = token_data.get('accessToken')
-            expires_in = token_data.get('expiresIn', 7200)
+    if len(kws) > 1:
+        api_keyword_str = " ".join(kws)
+        st.warning(f"⚠️ Multi-Species Filter: Searching for '{api_keyword_str}'. (API likely treats this as 'AND' logic. For volume check, recommend selecting ONE species at a time.)")
+    elif kws:
+        api_keyword_str = kws[0]
+        st.success(f"🧬 Species Filter Active: '{api_keyword_str}' (Will be applied to API requests)")
+
+st.divider()
+
+# ========================================================
+# 1. [核心更新] 本地库存检查 (Local Stock Check) - 支持日期范围
+# ========================================================
+st.markdown("#### 1️⃣ Local Stock Check (本地库存检查)")
+
+# 改为两列：日期选择 + 按钮
+c_inv_date, c_inv_btn = st.columns([2, 1])
+
+with c_inv_date:
+    # 默认查看过去 30 天
+    default_start = datetime.today() - timedelta(days=30)
+    default_end = datetime.today()
+    
+    check_range = st.date_input(
+        "📅 Select Date Range (选择检查范围)", 
+        value=(default_start, default_end), 
+        key="stock_check_date_range",
+        help="对于印度等数据量巨大的国家，请尽量缩小日期范围（如只查最近1个月），以防止数据库查询超时。"
+    )
+
+with c_inv_btn:
+    st.write("") 
+    st.write("") 
+    # 只有选好日期才能点
+    if st.button("📊 Show Heatmap (显示库存热力图)", type="secondary"):
+        st.session_state['show_heatmap'] = True
+        st.rerun()
+
+# 渲染热力图逻辑
+if st.session_state.get('show_heatmap', False):
+    st.divider()
+    
+    # 处理日期范围
+    check_start, check_end = None, None
+    if isinstance(check_range, tuple):
+        if len(check_range) == 2:
+            check_start, check_end = check_range
+        elif len(check_range) == 1:
+            check_start = check_range[0]
+            check_end = check_range[0]
+    
+    if check_start and check_end:
+        with st.spinner(f"Scanning Database from {check_start} to {check_end}..."):
+            # 调用 utils 里的智能检查函数
+            coverage_df = utils.check_data_coverage(
+                final_hs, 
+                str(check_start), 
+                str(check_end), 
+                origin_codes=dl_origins, 
+                dest_codes=dl_dests, 
+                target_species_list=dl_species
+            )
             
-            # 更新 Session State
-            st.session_state['access_token'] = new_token
-            st.session_state['token_expiry'] = time.time() + expires_in - 60 
-            return new_token
-        else:
-            st.error(f"🔐 自动登录失败: {res_json}")
-            # 如果失败，清除 Session 里的脏数据
-            if 'access_token' in st.session_state: del st.session_state['access_token']
-            return None
-    except Exception as e:
-        st.error(f"🔐 认证网络错误: {e}")
-        return None
-
-# --- 3. 业务逻辑函数 ---
-
-def identify_species(description_text):
-    if not description_text: return "Unknown"
-    desc_upper = str(description_text).upper()
-    for species, keywords in config.SPECIES_KEYWORDS.items():
-        for keyword in keywords:
-            if keyword in desc_upper:
-                return species
-    return "Other"
-
-def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports", origin_codes=None, dest_codes=None, just_checking=False, page_no=1, keyword=None, retry_count=0):
-    """获取数据，包含自动重试机制 (40302 Token失效自动修复)"""
-    url = "https://open-api.tendata.cn/v2/trade"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    
-    payload = {
-        "pageNo": page_no, 
-        "pageSize": 1 if just_checking else 100, 
-        "catalog": trade_type,
-        "startDate": str(start_date), 
-        "endDate": str(end_date), 
-        "hsCode": hs_code
-    }
-    if origin_codes: payload['countryOfOriginCode'] = ";".join(origin_codes)
-    if dest_codes: payload['countryOfDestinationCode'] = ";".join(dest_codes)
-    
-    if keyword:
-        payload['goodsDesc'] = keyword   
-        payload['keyword'] = keyword      
-        payload['productDesc'] = keyword  
-        payload['desc'] = keyword         
-        
-        if just_checking and retry_count == 0:
-            try:
-                import streamlit as st
-                st.toast(f"📡 发送筛选词: {keyword}", icon="🔍")
-            except:
-                pass
-
-    try:
-        response = requests.post(url, headers=headers, json=payload)
-        res_json = response.json()
-        
-        # 🔥 检测 40302 Token 无效错误并自动重试
-        if str(res_json.get('code')) == '40302':
-            if retry_count < 1: # 只重试一次
-                print(f"⚠️ Token Invalid (40302). Refreshing and Retrying... (HS: {hs_code})")
-                new_token = get_auto_token(force_refresh=True)
-                if new_token:
-                    return fetch_tendata_api(
-                        hs_code, start_date, end_date, 
-                        new_token, 
-                        trade_type, origin_codes, dest_codes, just_checking, page_no, keyword, 
-                        retry_count=1
-                    )
-                else:
-                    return {"code": 40302, "msg": "Token refresh failed"}
+            if not coverage_df.empty:
+                # 补全日期确保图表连续
+                full_range = pd.date_range(start=check_start, end=check_end)
+                full_df = pd.DataFrame({'date': full_range}).merge(coverage_df, on='date', how='left').fillna(0)
+                
+                # 渲染图表
+                fig = px.scatter(
+                    full_df, x="date", y=[1]*len(full_df), 
+                    size="count", color="count", 
+                    color_continuous_scale=["#e0e0e0", "green"], 
+                    title=f"Stock Heatmap ({check_start} ~ {check_end}) | Total: {int(coverage_df['count'].sum())} records", 
+                    height=250
+                )
+                fig.update_yaxes(visible=False, showticklabels=False)
+                fig.update_layout(plot_bgcolor='white', xaxis=dict(showgrid=False))
+                st.plotly_chart(fig, use_container_width=True)
             else:
-                return {"code": 40302, "msg": "Token invalid after retry"}
-
-        return res_json
-
-    except Exception as e:
-        return {"code": 500, "msg": str(e)}
-
-
-def save_to_supabase(api_json_data):
-    if not supabase: return 0, 0
-    data_node = api_json_data.get('data', {})
-    records = data_node.get('content', []) if isinstance(data_node, dict) else []
+                st.warning(f"⚠️ No Data found between {check_start} and {check_end} (该时间段无数据)")
+    else:
+        st.error("请选择完整的起始和结束日期")
     
-    if not records: return 0, 0
-    
-    db_rows = []
-    for item in records:
-        hs_code_val = item.get('hsCode')[0] if item.get('hsCode') else None
-        goods_desc_list = item.get('goodsDesc') or []
-        goods_desc_str = "; ".join([str(x) for x in goods_desc_list])
-        
-        row = {
-            "unique_record_id": item.get('id'),
-            "transaction_date": item.get('date'),
-            "hs_code": hs_code_val,
-            "product_desc_text": goods_desc_str,
-            "origin_country_code": item.get('countryOfOriginCode'),
-            "dest_country_code": item.get('countryOfDestinationCode'),
-            "port_of_departure": item.get('portOfDeparture'),
-            "port_of_arrival": item.get('portOfArrival'),
-            "importer_name": item.get('importer'),
-            "exporter_name": item.get('exporter'),
-            "quantity": item.get('quantity'),
-            "quantity_unit": item.get('quantityUnit'),
-            "total_value_usd": item.get('sumOfUsd'),
-            "raw_data": item
-        }
-        db_rows.append(row)
-    
-    try:
-        supabase.table('trade_records').upsert(db_rows, on_conflict='unique_record_id').execute()
-        return len(db_rows), len(records)
-    except Exception as e:
-        st.error(f"Error saving DB: {e}")
-        return 0, len(records)
-
-# --- 4. 库存检查函数 (包含防超时优化) ---
-def check_data_coverage(target_hs_codes, check_start_date, check_end_date, origin_codes=None, dest_codes=None, target_species_list=None):
-    if not supabase: return pd.DataFrame()
-    try:
-        # --- 1. 智能列选择 ---
-        select_cols = "transaction_date, hs_code"
-        
-        # 判断是否正在筛选特定国家
-        is_filtering_country = (origin_codes is not None and len(origin_codes) > 0)
-        
-        # 判断是否需要文本筛选
-        needs_text_filter = target_species_list and len(target_species_list) > 0
-        
-        # [优化策略]：如果正在筛选特定国家（如印度），为了速度和稳定性，牺牲文本字段扫描
-        # 因为带 WHERE origin='IND' 的大文本扫描极易超时
-        if needs_text_filter and is_filtering_country:
-             needs_text_filter = False 
-        
-        if needs_text_filter:
-            select_cols += ", product_desc_text"
-
-        # --- 2. 构建查询 ---
-        query = supabase.table('trade_records')\
-            .select(select_cols)\
-            .gte('transaction_date', check_start_date)\
-            .lte('transaction_date', check_end_date)\
-            .order("transaction_date", desc=True)
-            
-        # --- 3. 智能限流 (核心防超时) ---
-        if is_filtering_country:
-            # 筛选特定国家（如印度）：limit 降级为 2万条
-            query = query.limit(20000)
-        else:
-            # 全选模式（不筛国家）：limit 保持 10万条（利用时间索引，速度快）
-            query = query.limit(100000)
-            
-        if origin_codes: query = query.in_('origin_country_code', origin_codes)
-        if dest_codes: query = query.in_('dest_country_code', dest_codes)
-        
-        # 执行查询
-        response = query.execute()
-        rows = response.data
-        if not rows: return pd.DataFrame()
-        
-        df = pd.DataFrame(rows)
-        
-        # 4. Python 端过滤 HS Code
-        df['hs_str'] = df['hs_code'].astype(str)
-        df['match_hs'] = df['hs_str'].apply(lambda x: any(x.startswith(str(t)) for t in target_hs_codes))
-        df = df[df['match_hs']]
-        
-        if df.empty: return pd.DataFrame()
-        
-        # 5. 过滤树种 (如果开启)
-        if needs_text_filter and 'product_desc_text' in df.columns:
-            df['Species'] = df['product_desc_text'].apply(identify_species)
-            df = df[df['Species'].isin(target_species_list)]
-            if df.empty: return pd.DataFrame()
-
-        # 6. 聚合统计
-        daily_counts = df['transaction_date'].value_counts().reset_index()
-        daily_counts.columns = ['date', 'count']
-        daily_counts['date'] = pd.to_datetime(daily_counts['date'])
-        return daily_counts
-
-    except Exception as e:
-        # 捕获超时错误并友好提示
-        err_str = str(e)
-        if '57014' in err_str or 'timeout' in err_str.lower():
-            st.error("⚠️ 查询超时：该国家数据量过大。系统已自动限制查询样本，请尝试缩短日期范围或联系管理员添加索引。")
-        else:
-            st.error(f"⚠️ Check Logic Error: {err_str}")
-        return pd.DataFrame()
-
-# --- 5. 辅助 UI 函数 ---
-def country_format_func(code):
-    name = config.COUNTRY_NAME_MAP.get(code, code)
-    return f"{code} - {name}"
-
-def get_all_country_codes():
-    return sorted(list(set(
-        [code for group in config.COUNTRY_GROUPS.values() for code in group] + 
-        config.REGION_EUROPE_NO_RUS + 
-        config.REGION_SOUTH_AMERICA + 
-        config.REGION_ASIA_ALL
-    )))
-
-def render_region_buttons(target_key, col_obj):
-    rc1, rc2, rc3, rc4, rc5, rc6 = col_obj.columns([1,1,1,1,1,1])
-    current_selection = st.session_state.get(target_key, [])
-    if not isinstance(current_selection, list): current_selection = []
-
-    def add_region_codes(new_codes):
-        merged_set = set(current_selection) | set(new_codes)
-        st.session_state[target_key] = sorted(list(merged_set))
+    if st.button("❌ Close Chart (关闭图表)"):
+        st.session_state['show_heatmap'] = False
         st.rerun()
 
-    if rc1.button("亚洲 (AS)", key=f"btn_as_{target_key}"): add_region_codes(config.REGION_ASIA_ALL)
-    if rc2.button("欧洲 (EU)", key=f"btn_eu_{target_key}"): add_region_codes(config.REGION_EUROPE_NO_RUS)
-    if rc3.button("🇦🇺 澳新", key=f"btn_oc_{target_key}"): add_region_codes(config.REGION_OCEANIA)
-    if rc4.button("北美 (NA)", key=f"btn_na_{target_key}"): add_region_codes(config.REGION_NORTH_AMERICA)
-    if rc5.button("南美 (SA)", key=f"btn_sa_{target_key}"): add_region_codes(config.REGION_SOUTH_AMERICA)
-    if rc6.button("🗑️ 清空", key=f"btn_cls_{target_key}"):
-        st.session_state[target_key] = []
-        st.rerun()
+st.divider()
+
+# --- 2. API 预检 ---
+st.markdown("#### 2️⃣ API Volume Check (API 预检)")
+
+dl_date_range = st.date_input("Date Range (下载日期范围)", value=(datetime.today() - timedelta(days=7), datetime.today()), key="dl_date_key")
+
+if st.button("🔍 Check Volume (查询数据量)"):
+    with st.status(f"Querying Tendata API... (Keyword: {api_keyword_str if api_keyword_str else 'None'})", expanded=True) as status:
+        if not token: status.update(label="Auth Failed (认证失败)", state="error"); st.stop()
+        results = []
+        total_count = 0
+        for hs in final_hs:
+            for d in final_dirs:
+                # 调用 utils, 传入 keyword
+                res = utils.fetch_tendata_api(hs, dl_date_range[0], dl_date_range[1], token, d, dl_origins, dl_dests, just_checking=True, keyword=api_keyword_str)
+                if res and str(res.get('code')) == '200':
+                    data_node = res.get('data', {})
+                    count = data_node.get('total', 0)
+                    if count == 0: count = data_node.get('totalElements', 0)
+                    results.append({"HS Code": hs, "Flow": d, "API Count": count})
+                    total_count += count
+                else:
+                    # 显示具体的错误信息
+                    error_msg = res.get('msg', 'Unknown Error') if res else 'No Response'
+                    error_code = res.get('code', 'N/A') if res else 'N/A'
+                    results.append({"HS Code": hs, "Flow": d, "API Count": f"Err {error_code}: {error_msg}"})
+                    
+        status.update(label="Complete (完成)", state="complete")
+        if results:
+            st.table(pd.DataFrame(results))
+            if total_count > 0: st.success(f"✅ Total found on API: {total_count} records.")
+
+# --- 3. 执行下载 (包含断点续传逻辑) ---
+st.markdown("#### 3️⃣ Execute Download (执行下载)")
+
+c_exec1, c_exec2 = st.columns([1, 4])
+with c_exec1:
+    start_page_val = st.number_input("Start Page (起始页码)", min_value=1, value=1, help="用于断点续传。")
+with c_exec2:
+    st.write("") 
+    st.write("") 
+    start_btn = st.button("🚀 Start Download (开始下载 - 自动翻页)", type="primary")
+
+if start_btn:
+    with st.status("Downloading... (下载中)", expanded=True) as status:
+        if not token: status.update(label="Auth Failed (认证失败)", state="error"); st.stop()
+        progress_bar = st.progress(0); log_box = st.expander("Process Log (运行日志)", expanded=True)
+        total_ops = len(final_hs) * len(final_dirs); current_op = 0; stats = {"saved": 0}
+        
+        for hs in final_hs:
+            for d in final_dirs:
+                current_op += 1; progress_bar.progress(int(current_op/total_ops*100))
+                
+                page = start_page_val
+                if page > 1:
+                    log_box.info(f"⏭️ Resuming {hs} ({d}) from Page {page}...")
+                
+                has_more_data = True
+                total_saved_for_this_hs = 0
+                
+                while has_more_data:
+                    res = utils.fetch_tendata_api(hs, dl_date_range[0], dl_date_range[1], token, d, dl_origins, dl_dests, just_checking=False, page_no=page, keyword=api_keyword_str)
+                    if res and str(res.get('code')) == '200':
+                        saved_count, api_count = utils.save_to_supabase(res) # 调用 utils
+                        total_saved_for_this_hs += saved_count
+                        stats['saved'] += saved_count
+                        log_box.write(f"🔄 HS {hs} ({d}) - P{page}: Fetched {api_count} records")
+                        if api_count < 50: has_more_data = False
+                        else: page += 1; time.sleep(0.3)
+                    else:
+                        err_msg = res.get('msg', 'Unknown') if res else 'No Resp'
+                        log_box.error(f"HS {hs}: Error - {err_msg}"); has_more_data = False
+                
+                if total_saved_for_this_hs > 0: log_box.success(f"✅ HS {hs} ({d}) Done: Saved {total_saved_for_this_hs}")
+                else: log_box.warning(f"HS {hs} ({d}): No Data")
+        
+        status.update(label="All Done (全部完成)", state="complete")
+        st.success(f"🎉 Total Saved (累计入库): {stats['saved']} records")
