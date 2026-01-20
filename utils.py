@@ -8,7 +8,6 @@ import config  # 引用你的配置
 # --- 核心配置 ---
 SUPABASE_URL = "https://ajfmhcustdzdmcbgowgx.supabase.co"
 SUPABASE_KEY = "sb_secret_UdSZUH99OqFQ0Irca_LUWg_a7Sp-j_7"
-# ⚠️ 注意：建议将 Key 放入 Streamlit Secrets 以提高安全性
 TENDATA_API_KEY = "42127b0db5597b4a0d7063b99900c0eb"
 
 # --- 1. 数据库连接 (使用缓存，避免重复连接) ---
@@ -22,25 +21,17 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# --- 2. 自动 Token 管理 (升级版：支持强制刷新) ---
+# --- 2. 自动 Token 管理 ---
 def get_auto_token(force_refresh=False):
-    """
-    获取 Token。
-    :param force_refresh: 如果为 True，将忽略缓存，强制向 API 请求新 Token
-    """
-    # 如果不是强制刷新，且 Session 中有不过期的 Token，直接返回
+    """获取 Token，支持强制刷新"""
     if not force_refresh and 'access_token' in st.session_state and 'token_expiry' in st.session_state:
-        # 预留 60 秒缓冲期
         if time.time() < st.session_state['token_expiry']:
             return st.session_state['access_token']
 
-    # --- 请求新 Token ---
     auth_url = "https://open-api.tendata.cn/v2/access-token" 
     params = { "apiKey": TENDATA_API_KEY }
     
     try:
-        # 打印日志方便云端调试 (可选)
-        # print("🔄 Requesting new token...") 
         res = requests.get(auth_url, params=params)
         res_json = res.json()
         if str(res_json.get('code')) == '200':
@@ -54,8 +45,6 @@ def get_auto_token(force_refresh=False):
             return new_token
         else:
             st.error(f"🔐 自动登录失败: {res_json}")
-            # 如果失败，清除 Session 里的脏数据
-            if 'access_token' in st.session_state: del st.session_state['access_token']
             return None
     except Exception as e:
         st.error(f"🔐 认证网络错误: {e}")
@@ -72,14 +61,8 @@ def identify_species(description_text):
                 return species
     return "Other"
 
-
-# utils.py - 核心修复：智能重试机制 (Auto-Retry on 40302)
-
 def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports", origin_codes=None, dest_codes=None, just_checking=False, page_no=1, keyword=None, retry_count=0):
-    """
-    获取数据，包含自动重试机制。
-    如果遇到 40302 (Token失效)，会自动刷新 Token 并重试一次。
-    """
+    """获取数据，含40302自动重试机制"""
     url = "https://open-api.tendata.cn/v2/trade"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
@@ -94,7 +77,6 @@ def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports"
     if origin_codes: payload['countryOfOriginCode'] = ";".join(origin_codes)
     if dest_codes: payload['countryOfDestinationCode'] = ";".join(dest_codes)
     
-    # 关键词多字段匹配策略
     if keyword:
         payload['goodsDesc'] = keyword   
         payload['keyword'] = keyword      
@@ -109,38 +91,19 @@ def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports"
         response = requests.post(url, headers=headers, json=payload)
         res_json = response.json()
         
-        # 🔥 [核心修复] 检测 40302 Token 无效错误
         if str(res_json.get('code')) == '40302':
-            if retry_count < 1: # 只重试一次，防止死循环
-                print(f"⚠️ Token Invalid (40302). Refreshing and Retrying... (HS: {hs_code})")
-                
-                # 1. 强制刷新 Token
+            if retry_count < 1: 
                 new_token = get_auto_token(force_refresh=True)
-                
                 if new_token:
-                    # 2. 使用新 Token 递归调用自己进行重试
-                    return fetch_tendata_api(
-                        hs_code, start_date, end_date, 
-                        new_token, # 传入新 Token
-                        trade_type, origin_codes, dest_codes, just_checking, page_no, keyword, 
-                        retry_count=1 # 标记已重试
-                    )
-                else:
-                    return {"code": 40302, "msg": "Token refresh failed"}
-            else:
-                return {"code": 40302, "msg": "Token invalid after retry"}
-
+                    return fetch_tendata_api(hs_code, start_date, end_date, new_token, trade_type, origin_codes, dest_codes, just_checking, page_no, keyword, retry_count=1)
         return res_json
-
     except Exception as e:
         return {"code": 500, "msg": str(e)}
-
 
 def save_to_supabase(api_json_data):
     if not supabase: return 0, 0
     data_node = api_json_data.get('data', {})
     records = data_node.get('content', []) if isinstance(data_node, dict) else []
-    
     if not records: return 0, 0
     
     db_rows = []
@@ -174,15 +137,24 @@ def save_to_supabase(api_json_data):
         st.error(f"Error saving DB: {e}")
         return 0, len(records)
 
+# --- [重点优化] 智能库存检查函数 ---
 def check_data_coverage(target_hs_codes, check_start_date, check_end_date, origin_codes=None, dest_codes=None, target_species_list=None):
     if not supabase: return pd.DataFrame()
     try:
+        # 1. 智能列选择：如果不筛选树种，就不查 product_desc_text (这个字段非常大，极易导致超时)
+        select_cols = "transaction_date, hs_code"
+        needs_text_filter = target_species_list and len(target_species_list) > 0
+        
+        if needs_text_filter:
+            select_cols += ", product_desc_text"
+
+        # 2. 构建查询
         query = supabase.table('trade_records')\
-            .select("transaction_date, hs_code, product_desc_text")\
+            .select(select_cols)\
             .gte('transaction_date', check_start_date)\
             .lte('transaction_date', check_end_date)\
             .order("transaction_date", desc=True)\
-            .limit(500000)
+            .limit(100000) # [优化] 降级限制：50万 -> 10万，防止印度等大数据量国家超时
             
         if origin_codes: query = query.in_('origin_country_code', origin_codes)
         if dest_codes: query = query.in_('dest_country_code', dest_codes)
@@ -192,17 +164,21 @@ def check_data_coverage(target_hs_codes, check_start_date, check_end_date, origi
         if not rows: return pd.DataFrame()
         
         df = pd.DataFrame(rows)
+        
+        # 3. Python 端过滤 HS Code
         df['hs_str'] = df['hs_code'].astype(str)
         df['match_hs'] = df['hs_str'].apply(lambda x: any(x.startswith(str(t)) for t in target_hs_codes))
         df = df[df['match_hs']]
         
         if df.empty: return pd.DataFrame()
         
-        if target_species_list and len(target_species_list) > 0:
+        # 4. 如果需要，过滤树种 (仅当之前请求了该字段)
+        if needs_text_filter:
             df['Species'] = df['product_desc_text'].apply(identify_species)
             df = df[df['Species'].isin(target_species_list)]
             if df.empty: return pd.DataFrame()
 
+        # 5. 聚合统计
         daily_counts = df['transaction_date'].value_counts().reset_index()
         daily_counts.columns = ['date', 'count']
         daily_counts['date'] = pd.to_datetime(daily_counts['date'])
@@ -226,28 +202,20 @@ def get_all_country_codes():
     )))
 
 def render_region_buttons(target_key, col_obj):
-    """渲染地区快捷按钮 (累加模式 + 清空功能)"""
     rc1, rc2, rc3, rc4, rc5, rc6 = col_obj.columns([1,1,1,1,1,1])
-    
     current_selection = st.session_state.get(target_key, [])
-    if not isinstance(current_selection, list):
-        current_selection = []
+    if not isinstance(current_selection, list): current_selection = []
 
     def add_region_codes(new_codes):
         merged_set = set(current_selection) | set(new_codes)
         st.session_state[target_key] = sorted(list(merged_set))
         st.rerun()
 
-    if rc1.button("亚洲 (AS)", key=f"btn_as_{target_key}"): 
-        add_region_codes(config.REGION_ASIA_ALL)
-    if rc2.button("欧洲 (EU)", key=f"btn_eu_{target_key}"): 
-        add_region_codes(config.REGION_EUROPE_NO_RUS)
-    if rc3.button("🇦🇺 澳新", key=f"btn_oc_{target_key}"): 
-        add_region_codes(config.REGION_OCEANIA)
-    if rc4.button("北美 (NA)", key=f"btn_na_{target_key}"): 
-        add_region_codes(config.REGION_NORTH_AMERICA)
-    if rc5.button("南美 (SA)", key=f"btn_sa_{target_key}"): 
-        add_region_codes(config.REGION_SOUTH_AMERICA)
+    if rc1.button("亚洲 (AS)", key=f"btn_as_{target_key}"): add_region_codes(config.REGION_ASIA_ALL)
+    if rc2.button("欧洲 (EU)", key=f"btn_eu_{target_key}"): add_region_codes(config.REGION_EUROPE_NO_RUS)
+    if rc3.button("🇦🇺 澳新", key=f"btn_oc_{target_key}"): add_region_codes(config.REGION_OCEANIA)
+    if rc4.button("北美 (NA)", key=f"btn_na_{target_key}"): add_region_codes(config.REGION_NORTH_AMERICA)
+    if rc5.button("南美 (SA)", key=f"btn_sa_{target_key}"): add_region_codes(config.REGION_SOUTH_AMERICA)
     if rc6.button("🗑️ 清空", key=f"btn_cls_{target_key}"):
         st.session_state[target_key] = []
         st.rerun()
