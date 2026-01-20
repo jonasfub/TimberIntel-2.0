@@ -22,7 +22,7 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# --- 2. 自动 Token 管理 (包含 get_auto_token 函数) ---
+# --- 2. 自动 Token 管理 (包含自动刷新逻辑) ---
 def get_auto_token(force_refresh=False):
     """
     获取 Token。
@@ -93,7 +93,6 @@ def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports"
         payload['desc'] = keyword         
         
         if just_checking and retry_count == 0:
-            # 仅在 Streamlit 上下文中显示 toast
             try:
                 import streamlit as st
                 st.toast(f"📡 发送筛选词: {keyword}", icon="🔍")
@@ -165,59 +164,78 @@ def save_to_supabase(api_json_data):
         st.error(f"Error saving DB: {e}")
         return 0, len(records)
 
-# --- 4. 库存检查函数 (针对印度优化版) ---
+# --- 4. 库存检查函数 (包含防超时优化) ---
 def check_data_coverage(target_hs_codes, check_start_date, check_end_date, origin_codes=None, dest_codes=None, target_species_list=None):
     if not supabase: return pd.DataFrame()
     try:
-        # 1. 智能列选择
+        # --- 1. 智能列选择 ---
         select_cols = "transaction_date, hs_code"
-        needs_text_filter = target_species_list and len(target_species_list) > 0
-        is_heavy_country = origin_codes and ('IND' in origin_codes) # 印度极速模式
         
-        if needs_text_filter and not is_heavy_country:
+        # 判断是否正在筛选特定国家
+        is_filtering_country = (origin_codes is not None and len(origin_codes) > 0)
+        
+        # 判断是否需要文本筛选
+        needs_text_filter = target_species_list and len(target_species_list) > 0
+        
+        # [优化策略]：如果正在筛选特定国家（如印度），为了速度和稳定性，牺牲文本字段扫描
+        # 因为带 WHERE origin='IND' 的大文本扫描极易超时
+        if needs_text_filter and is_filtering_country:
+             needs_text_filter = False 
+        
+        if needs_text_filter:
             select_cols += ", product_desc_text"
 
-        # 2. 构建查询
+        # --- 2. 构建查询 ---
         query = supabase.table('trade_records')\
             .select(select_cols)\
             .gte('transaction_date', check_start_date)\
             .lte('transaction_date', check_end_date)\
             .order("transaction_date", desc=True)
             
-        if is_heavy_country:
-            query = query.limit(15000) # 印度降级为 1.5万条
-            if needs_text_filter:
-                st.toast("⚠️ 印度数据量过大，已自动关闭树种筛选以加速。", icon="🚀")
-                needs_text_filter = False 
+        # --- 3. 智能限流 (核心防超时) ---
+        if is_filtering_country:
+            # 筛选特定国家（如印度）：limit 降级为 2万条
+            query = query.limit(20000)
         else:
+            # 全选模式（不筛国家）：limit 保持 10万条（利用时间索引，速度快）
             query = query.limit(100000)
             
         if origin_codes: query = query.in_('origin_country_code', origin_codes)
         if dest_codes: query = query.in_('dest_country_code', dest_codes)
         
+        # 执行查询
         response = query.execute()
         rows = response.data
         if not rows: return pd.DataFrame()
         
         df = pd.DataFrame(rows)
+        
+        # 4. Python 端过滤 HS Code
         df['hs_str'] = df['hs_code'].astype(str)
         df['match_hs'] = df['hs_str'].apply(lambda x: any(x.startswith(str(t)) for t in target_hs_codes))
         df = df[df['match_hs']]
         
         if df.empty: return pd.DataFrame()
         
+        # 5. 过滤树种 (如果开启)
         if needs_text_filter and 'product_desc_text' in df.columns:
             df['Species'] = df['product_desc_text'].apply(identify_species)
             df = df[df['Species'].isin(target_species_list)]
             if df.empty: return pd.DataFrame()
 
+        # 6. 聚合统计
         daily_counts = df['transaction_date'].value_counts().reset_index()
         daily_counts.columns = ['date', 'count']
         daily_counts['date'] = pd.to_datetime(daily_counts['date'])
         return daily_counts
 
     except Exception as e:
-        st.error(f"⚠️ Check Logic Error: {str(e)}")
+        # 捕获超时错误并友好提示
+        err_str = str(e)
+        if '57014' in err_str or 'timeout' in err_str.lower():
+            st.error("⚠️ 查询超时：该国家数据量过大。系统已自动限制查询样本，请尝试缩短日期范围或联系管理员添加索引。")
+        else:
+            st.error(f"⚠️ Check Logic Error: {err_str}")
         return pd.DataFrame()
 
 # --- 5. 辅助 UI 函数 ---
@@ -229,7 +247,7 @@ def get_all_country_codes():
     return sorted(list(set(
         [code for group in config.COUNTRY_GROUPS.values() for code in group] + 
         config.REGION_EUROPE_NO_RUS + 
-        config.REGION_SOUTH_AMERICA +
+        config.REGION_SOUTH_AMERICA + 
         config.REGION_ASIA_ALL
     )))
 
