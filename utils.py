@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import time
 from supabase import create_client, Client
+from datetime import datetime, timedelta # 确保引入了 timedelta
 import config  # 引用 config.py
 
 # --- 核心配置 ---
@@ -40,28 +41,40 @@ def get_auto_token(force_refresh=False):
     auth_url = "https://open-api.tendata.cn/v2/access-token" 
     params = { "apiKey": TENDATA_API_KEY }
     
+    # ... (在 utils.py 的 get_auto_token 函数内部) ...
+
     try:
         res = requests.get(auth_url, params=params)
         res_json = res.json()
         
+        # --- 🛠️ 调试代码：请查看 Streamlit 控制台打印出的真实数据 ---
+        print("API 完整响应:", res_json) 
+        # -------------------------------------------------------
+
         # 检查是否成功 (Code 200)
         if str(res_json.get('code')) == '200':
             data = res_json.get('data', {})
             new_token = data.get('accessToken')
             
-            # --- 🔥 核心修改：捕获余额和有效期 ---
-            balance = data.get('balance', 0)
-            expires_str = data.get('expiresIn', 'Unknown')
+            # --- 修复 1: 处理有效期 (将秒数转换为具体时间字符串) ---
+            expires_in_seconds = data.get('expiresIn', 7200) # 获取秒数，默认 7200
+            
+            # 计算：当前时间 + 秒数 = 过期时间
+            expiry_date = datetime.now() + timedelta(seconds=int(expires_in_seconds))
+            expires_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S")
+            
+            # --- 修复 2: 尝试获取余额 (如果字段名不是 balance) ---
+            # 这里的 'balance' 可能需要根据上面的 print 结果修改
+            # 有些 API 可能叫 'remainder', 'points', 'money' 等
+            balance = data.get('balance', 0) 
             
             # 存入 Session State 供前端展示
             st.session_state['api_balance'] = balance
             st.session_state['api_expires_str'] = expires_str
-            # --------------------------------
             
-            # --- 修复 Token 本地过期逻辑 ---
-            # 本地缓存 1 小时 (3600秒)
+            # 本地缓存 token (保持原样)
             st.session_state['access_token'] = new_token
-            st.session_state['token_expiry'] = time.time() + 3600 
+            st.session_state['token_expiry'] = time.time() + int(expires_in_seconds) - 60 # 提前60秒视为过期
             
             return new_token
         else:
