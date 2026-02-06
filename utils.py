@@ -298,3 +298,41 @@ def render_region_buttons(target_key, col_obj):
     if rc6.button("🗑️ 清空", key=f"btn_cls_{target_key}"):
         st.session_state[target_key] = []
         st.rerun()
+
+
+
+# ✅ 这是根据你提供的 curl 确认的正确地址
+ACCOUNT_INFO_URL = "https://open-api.tendata.cn/v2/account"
+
+def get_remote_account_info(token):
+    """
+    使用 Token 查询真实的账户余额和会员有效期
+    """
+    if not token: return None
+        
+    headers = {
+        "Authorization": f"Bearer {token}",  # 对应 curl 中的 --header 'Authorization: Bearer ...'
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        # 发送 GET 请求
+        res = requests.get(ACCOUNT_INFO_URL, headers=headers)
+        res_json = res.json()
+        
+        # 调试：打印结果，确保能在控制台看到真实结构
+        print(f"💰 [Account Info] 响应: {res_json}")
+        
+        if str(res_json.get('code')) == '200':
+            data = res_json.get('data', {})
+            
+            # 通常这个接口返回的字段可能叫 'balance' 或 'point'
+            # 同时也找一下有没有 'expireDate' 或 'serviceEndTime' 之类的
+            return data 
+        else:
+            st.error(f"❌ 账户查询失败: {res_json.get('msg')}")
+            return None
+            
+    except Exception as e:
+        st.error(f"❌ 网络请求错误: {e}")
+        return None
