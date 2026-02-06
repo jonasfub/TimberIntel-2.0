@@ -27,13 +27,11 @@ supabase = init_supabase()
 # --- 2. 自动 Token 管理 ---
 def get_auto_token(force_refresh=False):
     """
-    获取 Token，同时提取余额和有效期存入 Session。
-    :param force_refresh: 如果为 True，将忽略缓存，强制向 API 请求新 Token
+    智能获取 Token：自动识别 API 返回的是“秒数”还是“日期字符串”
     """
-    # 1. 缓存检查：如果 Session 中有不过期的 Token，且余额信息已存在，直接返回
+    # 1. 缓存检查 (保持原样)
     if not force_refresh and 'access_token' in st.session_state and 'token_expiry' in st.session_state:
         if time.time() < st.session_state['token_expiry']:
-            # 额外检查：确保我们已经拿到了 balance 信息，否则强制刷新一次
             if 'api_balance' in st.session_state:
                 return st.session_state['access_token']
 
@@ -41,50 +39,60 @@ def get_auto_token(force_refresh=False):
     auth_url = "https://open-api.tendata.cn/v2/access-token" 
     params = { "apiKey": TENDATA_API_KEY }
     
-    # ... (在 utils.py 的 get_auto_token 函数内部) ...
-
     try:
         res = requests.get(auth_url, params=params)
         res_json = res.json()
         
-        # --- 🛠️ 调试代码：请查看 Streamlit 控制台打印出的真实数据 ---
-        print("API 完整响应:", res_json) 
-        # -------------------------------------------------------
+        # 🐛 调试关键：打印真实返回的数据，请在后台终端查看
+        print(f"🔍 [API DEBUG] 原始返回数据: {res_json}")
 
-        # 检查是否成功 (Code 200)
         if str(res_json.get('code')) == '200':
             data = res_json.get('data', {})
             new_token = data.get('accessToken')
             
-            # --- 修复 1: 处理有效期 (将秒数转换为具体时间字符串) ---
-            expires_in_seconds = data.get('expiresIn', 7200) # 获取秒数，默认 7200
+            # --- 🔥 核心修复：智能解析有效期 ---
+            raw_expires = data.get('expiresIn', 7200)
+            expires_display_str = "Unknown"
+            token_valid_seconds = 7200 # 默认 Token 本地缓存 2 小时
+
+            # 情况 A: API 返回的是数字 (例如 7200) -> 这是 Token 有效期
+            if isinstance(raw_expires, (int, float)) or (isinstance(raw_expires, str) and raw_expires.isdigit()):
+                seconds = int(raw_expires)
+                # 计算出具体的过期时间点，用于显示
+                exp_dt = datetime.now() + timedelta(seconds=seconds)
+                expires_display_str = exp_dt.strftime("%Y-%m-%d %H:%M:%S")
+                token_valid_seconds = seconds
             
-            # 计算：当前时间 + 秒数 = 过期时间
-            expiry_date = datetime.now() + timedelta(seconds=int(expires_in_seconds))
-            expires_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S")
+            # 情况 B: API 返回的是日期字符串 (例如 "2025-09-10 00:00:00") -> 这是账号有效期
+            else:
+                expires_display_str = str(raw_expires)
+                # 如果是这种情况，我们手动设置本地 Token 缓存时间为 2 小时 (7200秒)
+                # 因为账号有效期可能很长，但 Access Token 通常只有 2 小时寿命
+                token_valid_seconds = 7200 
+
+            # --- 获取余额 ---
+            # 如果文档说是 "balance"，但实际拿到 0，请看控制台 print 输出的真实字段名
+            balance = data.get('balance', 0)
             
-            # --- 修复 2: 尝试获取余额 (如果字段名不是 balance) ---
-            # 这里的 'balance' 可能需要根据上面的 print 结果修改
-            # 有些 API 可能叫 'remainder', 'points', 'money' 等
-            balance = data.get('balance', 0) 
-            
-            # 存入 Session State 供前端展示
+            # --- 更新 Session ---
             st.session_state['api_balance'] = balance
-            st.session_state['api_expires_str'] = expires_str
+            st.session_state['api_expires_str'] = expires_display_str # 存入格式化后的时间
             
-            # 本地缓存 token (保持原样)
+            # --- 更新 Token 缓存 ---
             st.session_state['access_token'] = new_token
-            st.session_state['token_expiry'] = time.time() + int(expires_in_seconds) - 60 # 提前60秒视为过期
+            # 本地过期时间 = 当前时间 + Token 有效期 - 缓冲时间(60秒)
+            st.session_state['token_expiry'] = time.time() + token_valid_seconds - 60 
             
             return new_token
         else:
-            st.error(f"🔐 自动登录失败: {res_json}")
-            # 如果失败，清除 Session 里的脏数据
+            st.error(f"🔐 登录失败: {res_json.get('msg')}")
             if 'access_token' in st.session_state: del st.session_state['access_token']
             return None
     except Exception as e:
-        st.error(f"🔐 认证网络错误: {e}")
+        st.error(f"🔐 网络或解析错误: {e}")
         return None
+
+
 
 # --- 3. 业务逻辑函数 ---
 
