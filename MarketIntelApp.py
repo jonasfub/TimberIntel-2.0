@@ -161,6 +161,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
     df = st.session_state['analysis_df']
 
     # --- 数据清洗 ---
+    # 1. 清洗港口名称 (增加空值处理)
     df['port_of_arrival'] = df['port_of_arrival'].fillna('Unknown').astype(str).apply(
         lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in x else x.strip()
     )
@@ -194,9 +195,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         forbidden_type = "Hardwood" if current_category_type == "Softwood" else "Softwood"
         forbidden_species = getattr(config, 'SPECIES_CATEGORY_MAP', {}).get(forbidden_type, [])
         if forbidden_species:
-            dirty_rows = df[df['Species'].isin(forbidden_species)]
-            if not dirty_rows.empty:
-                df = df[~df['Species'].isin(forbidden_species)]
+            df = df[~df['Species'].isin(forbidden_species)]
     
     # --- 本地筛选 ---
     if ana_species_selected: df = df[df['Species'].isin(ana_species_selected)]
@@ -209,10 +208,15 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         # 3. 计算指标
         df['unit_price'] = df.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 and pd.notnull(x['total_value_usd']) else 0, axis=1)
         
+        # 🔥 [修复核心] 安全的国家名称转换函数
         def get_country_name_en(code):
+            if pd.isna(code) or code == "" or code is None:
+                return "Unknown"
             full_name = config.COUNTRY_NAME_MAP.get(code, code)
-            if '(' in full_name: return full_name.split(' (')[0]
-            return full_name
+            full_name_str = str(full_name) # 强制转字符串
+            if '(' in full_name_str: 
+                return full_name_str.split(' (')[0]
+            return full_name_str
 
         df['origin_name'] = df['origin_country_code'].apply(get_country_name_en)
         df['dest_name'] = df['dest_country_code'].apply(get_country_name_en)
