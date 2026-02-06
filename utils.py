@@ -23,16 +23,20 @@ def init_supabase():
 supabase = init_supabase()
 
 # --- 2. 自动 Token 管理 ---
+
+# utils.py 中的 get_auto_token 函数替换如下
+
 def get_auto_token(force_refresh=False):
     """
-    获取 Token。
+    获取 Token，同时提取余额和有效期存入 Session。
     :param force_refresh: 如果为 True，将忽略缓存，强制向 API 请求新 Token
     """
-    # 如果不是强制刷新，且 Session 中有不过期的 Token，直接返回
+    # 1. 缓存检查：如果 Session 中有不过期的 Token，且余额信息已存在，直接返回
     if not force_refresh and 'access_token' in st.session_state and 'token_expiry' in st.session_state:
-        # 预留 60 秒缓冲期
         if time.time() < st.session_state['token_expiry']:
-            return st.session_state['access_token']
+            # 额外检查：确保我们已经拿到了 balance 信息，否则强制刷新一次以获取它
+            if 'api_balance' in st.session_state:
+                return st.session_state['access_token']
 
     # --- 请求新 Token ---
     auth_url = "https://open-api.tendata.cn/v2/access-token" 
@@ -41,14 +45,29 @@ def get_auto_token(force_refresh=False):
     try:
         res = requests.get(auth_url, params=params)
         res_json = res.json()
+        
+        # 检查是否成功 (Code 200)
         if str(res_json.get('code')) == '200':
-            token_data = res_json.get('data', {})
-            new_token = token_data.get('accessToken')
-            expires_in = token_data.get('expiresIn', 7200)
+            data = res_json.get('data', {})
+            new_token = data.get('accessToken')
             
-            # 更新 Session State
+            # --- 🔥 核心修改：捕获余额和有效期 ---
+            # JSON示例: { "balance": 5678, "expiresIn": "2025-09-10 00:00:00" }
+            balance = data.get('balance', 0)
+            expires_str = data.get('expiresIn', 'Unknown')
+            
+            # 存入 Session State 供前端展示
+            st.session_state['api_balance'] = balance
+            st.session_state['api_expires_str'] = expires_str
+            # --------------------------------
+            
+            # --- 修复 Token 本地过期逻辑 ---
+            # 因为 API 返回的是绝对日期字符串，不能直接做加法。
+            # 为了简单稳定，我们让 Token 在本地缓存 1 小时 (3600秒)
+            # 这样既能避免频繁请求 API，又能保证数据相对新鲜
             st.session_state['access_token'] = new_token
-            st.session_state['token_expiry'] = time.time() + expires_in - 60 
+            st.session_state['token_expiry'] = time.time() + 3600 
+            
             return new_token
         else:
             st.error(f"🔐 自动登录失败: {res_json}")
@@ -57,7 +76,8 @@ def get_auto_token(force_refresh=False):
             return None
     except Exception as e:
         st.error(f"🔐 认证网络错误: {e}")
-        return None
+        return None.
+
 
 # --- 3. 业务逻辑函数 ---
 
