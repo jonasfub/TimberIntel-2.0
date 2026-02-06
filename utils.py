@@ -2,16 +2,18 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
+from datetime import datetime, timedelta
 from supabase import create_client, Client
-from datetime import datetime, timedelta # 确保引入了 timedelta
 import config  # 引用 config.py
 
 # --- 核心配置 ---
-# ⚠️ 请确保这里的 URL 和 Key 是正确的
+# ⚠️ 请确保这里的 URL 和 Key 是正确的 (基于你之前提供的代码)
 SUPABASE_URL = "https://ajfmhcustdzdmcbgowgx.supabase.co"
-# 注意：这里使用的是你提供的 Key
 SUPABASE_KEY = "sb_secret_UdSZUH99OqFQ0Irca_LUWg_a7Sp-j_7"
 TENDATA_API_KEY = "42127b0db5597b4a0d7063b99900c0eb"
+
+# ✅ 新增：账户信息查询接口 (用于获取余额和会员有效期)
+ACCOUNT_INFO_URL = "https://open-api.tendata.cn/v2/account"
 
 # --- 1. 数据库连接 (使用缓存，避免重复连接) ---
 @st.cache_resource
@@ -27,13 +29,14 @@ supabase = init_supabase()
 # --- 2. 自动 Token 管理 ---
 def get_auto_token(force_refresh=False):
     """
-    智能获取 Token：自动识别 API 返回的是“秒数”还是“日期字符串”
+    获取访问 Token (Access Token)。
+    修复说明：只负责获取 Token 和临时有效期 (7200s)，不再强制获取余额。
+    :param force_refresh: 如果为 True，将忽略缓存，强制向 API 请求新 Token
     """
-    # 1. 缓存检查 (保持原样)
+    # 1. 缓存检查
     if not force_refresh and 'access_token' in st.session_state and 'token_expiry' in st.session_state:
         if time.time() < st.session_state['token_expiry']:
-            if 'api_balance' in st.session_state:
-                return st.session_state['access_token']
+            return st.session_state['access_token']
 
     # --- 请求新 Token ---
     auth_url = "https://open-api.tendata.cn/v2/access-token" 
@@ -43,58 +46,65 @@ def get_auto_token(force_refresh=False):
         res = requests.get(auth_url, params=params)
         res_json = res.json()
         
-        # 🐛 调试关键：打印真实返回的数据，请在后台终端查看
-        print(f"🔍 [API DEBUG] 原始返回数据: {res_json}")
-
+        # 检查是否成功 (Code 200)
         if str(res_json.get('code')) == '200':
             data = res_json.get('data', {})
             new_token = data.get('accessToken')
             
-            # --- 🔥 核心修复：智能解析有效期 ---
-            raw_expires = data.get('expiresIn', 7200)
-            expires_display_str = "Unknown"
-            token_valid_seconds = 7200 # 默认 Token 本地缓存 2 小时
-
-            # 情况 A: API 返回的是数字 (例如 7200) -> 这是 Token 有效期
-            if isinstance(raw_expires, (int, float)) or (isinstance(raw_expires, str) and raw_expires.isdigit()):
-                seconds = int(raw_expires)
-                # 计算出具体的过期时间点，用于显示
-                exp_dt = datetime.now() + timedelta(seconds=seconds)
-                expires_display_str = exp_dt.strftime("%Y-%m-%d %H:%M:%S")
-                token_valid_seconds = seconds
+            # --- 有效期解析 ---
+            # API 返回的是 expiresIn: 7200 (秒)
+            expires_in_seconds = data.get('expiresIn', 7200)
             
-            # 情况 B: API 返回的是日期字符串 (例如 "2025-09-10 00:00:00") -> 这是账号有效期
-            else:
-                expires_display_str = str(raw_expires)
-                # 如果是这种情况，我们手动设置本地 Token 缓存时间为 2 小时 (7200秒)
-                # 因为账号有效期可能很长，但 Access Token 通常只有 2 小时寿命
-                token_valid_seconds = 7200 
-
-            # --- 获取余额 ---
-            # 如果文档说是 "balance"，但实际拿到 0，请看控制台 print 输出的真实字段名
-            balance = data.get('balance', 0)
+            # 兼容性处理：如果返回的是字符串且是数字
+            if isinstance(expires_in_seconds, str) and expires_in_seconds.isdigit():
+                expires_in_seconds = int(expires_in_seconds)
             
-            # --- 更新 Session ---
-            st.session_state['api_balance'] = balance
-            st.session_state['api_expires_str'] = expires_display_str # 存入格式化后的时间
-            
-            # --- 更新 Token 缓存 ---
+            # 存入 Session
             st.session_state['access_token'] = new_token
-            # 本地过期时间 = 当前时间 + Token 有效期 - 缓冲时间(60秒)
-            st.session_state['token_expiry'] = time.time() + token_valid_seconds - 60 
+            # 设置本地过期时间 (当前时间 + 有效期秒数 - 60秒缓冲)
+            st.session_state['token_expiry'] = time.time() + expires_in_seconds - 60 
             
             return new_token
         else:
-            st.error(f"🔐 登录失败: {res_json.get('msg')}")
+            st.error(f"🔐 自动登录失败: {res_json}")
             if 'access_token' in st.session_state: del st.session_state['access_token']
             return None
     except Exception as e:
-        st.error(f"🔐 网络或解析错误: {e}")
+        st.error(f"🔐 认证网络错误: {e}")
         return None
 
+# --- 3. 新增：获取账户详细信息 ---
+def get_remote_account_info(token):
+    """
+    使用 Token 查询真实的账户余额和会员有效期。
+    调用接口: /v2/account
+    """
+    if not token: return None
+        
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        # 发送 GET 请求
+        res = requests.get(ACCOUNT_INFO_URL, headers=headers)
+        res_json = res.json()
+        
+        # print(f"💰 [DEBUG] Account Info Response: {res_json}") # 调试用
+        
+        if str(res_json.get('code')) == '200':
+            # 返回 data 数据块，里面包含 balance, expireTime 等
+            return res_json.get('data', {})
+        else:
+            # 如果 Token 过期等原因导致失败，不报错，只返回 None
+            return None
+            
+    except Exception as e:
+        st.error(f"❌ 账户查询网络错误: {e}")
+        return None
 
-
-# --- 3. 业务逻辑函数 ---
+# --- 4. 业务逻辑函数 ---
 
 def identify_species(description_text):
     if not description_text: return "Unknown"
@@ -196,7 +206,7 @@ def save_to_supabase(api_json_data):
         st.error(f"Error saving DB: {e}")
         return 0, len(records)
 
-# --- 4. 库存检查函数 ---
+# --- 5. 库存检查函数 ---
 def check_data_coverage(target_hs_codes, check_start_date, check_end_date, origin_codes=None, dest_codes=None, target_species_list=None):
     if not supabase: return pd.DataFrame()
     try:
@@ -267,7 +277,7 @@ def check_data_coverage(target_hs_codes, check_start_date, check_end_date, origi
             st.error(f"⚠️ Check Logic Error: {err_str}")
         return pd.DataFrame()
 
-# --- 5. 辅助 UI 函数 ---
+# --- 6. 辅助 UI 函数 ---
 def country_format_func(code):
     name = config.COUNTRY_NAME_MAP.get(code, code)
     return f"{code} - {name}"
@@ -298,41 +308,3 @@ def render_region_buttons(target_key, col_obj):
     if rc6.button("🗑️ 清空", key=f"btn_cls_{target_key}"):
         st.session_state[target_key] = []
         st.rerun()
-
-
-
-# ✅ 这是根据你提供的 curl 确认的正确地址
-ACCOUNT_INFO_URL = "https://open-api.tendata.cn/v2/account"
-
-def get_remote_account_info(token):
-    """
-    使用 Token 查询真实的账户余额和会员有效期
-    """
-    if not token: return None
-        
-    headers = {
-        "Authorization": f"Bearer {token}",  # 对应 curl 中的 --header 'Authorization: Bearer ...'
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        # 发送 GET 请求
-        res = requests.get(ACCOUNT_INFO_URL, headers=headers)
-        res_json = res.json()
-        
-        # 调试：打印结果，确保能在控制台看到真实结构
-        print(f"💰 [Account Info] 响应: {res_json}")
-        
-        if str(res_json.get('code')) == '200':
-            data = res_json.get('data', {})
-            
-            # 通常这个接口返回的字段可能叫 'balance' 或 'point'
-            # 同时也找一下有没有 'expireDate' 或 'serviceEndTime' 之类的
-            return data 
-        else:
-            st.error(f"❌ 账户查询失败: {res_json.get('msg')}")
-            return None
-            
-    except Exception as e:
-        st.error(f"❌ 网络请求错误: {e}")
-        return None
