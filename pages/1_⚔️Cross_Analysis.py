@@ -22,10 +22,23 @@ df = st.session_state['analysis_df'].copy()
 DEFAULT_ASIA_MARKETS = ["China", "India", "Vietnam", "Thailand", "Malaysia", "Indonesia"]
 
 # --- 2. 基础数据清洗 ---
+# 🔥 [修复核心] 安全的国家名称转换函数 (防止空值报错)
 def get_country_name_en(code):
+    # 1. 如果代码本身是空的，直接返回 Unknown
+    if pd.isna(code) or code == "" or code is None:
+        return "Unknown"
+        
+    # 2. 获取全名，如果找不到则返回原代码
     full_name = config.COUNTRY_NAME_MAP.get(code, code)
-    if '(' in full_name: return full_name.split(' (')[0]
-    return full_name
+    
+    # 3. 强制转为字符串，防止非 String 类型导致报错
+    full_name_str = str(full_name)
+    
+    # 4. 安全进行切割
+    if '(' in full_name_str: 
+        return full_name_str.split(' (')[0]
+        
+    return full_name_str
 
 df['origin_name'] = df['origin_country_code'].apply(get_country_name_en)
 df['dest_name'] = df['dest_country_code'].apply(get_country_name_en)
