@@ -73,54 +73,79 @@ if isinstance(date_range, tuple):
 if start_d and end_d:
     st.info(f"📅 当前分析范围: **{start_d}** 至 **{end_d}**")
 
-    # 点击按钮 -> 触发数据加载并存入 Session State
+  # 点击按钮 -> 触发数据加载并存入 Session State
     if st.button("📊 加载分析报告 (Load Analysis Report)", type="primary"):
         all_rows = []
-        batch_size = 5000 
-        page = 0
-        max_pages = 100 
+        batch_size = 5000  # 保持 5000
+        
+        # 优化：仅需要的列
         needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,exporter_name,importer_name,unique_record_id"
         
-        with st.status("🚀 初始化提取任务...", expanded=True) as status:
+        with st.status("🚀 初始化高速提取任务 (Cursor Mode)...", expanded=True) as status:
             msg_placeholder = st.empty()
             progress_bar = st.progress(0)
             
+            # --- 🚀 核心修改：使用 last_id 进行游标分页 ---
+            last_id = None 
+            total_fetched = 0
+            
             try:
-                while page < max_pages:
-                    range_start = page * batch_size
-                    range_end = range_start + batch_size - 1
+                while True:
+                    msg_placeholder.info(f"🔄 正在提取数据... 已获取 {total_fetched} 条")
                     
-                    msg_placeholder.info(f"🔄 正在提取第 {page+1} 批数据 (Offset {range_start})...")
-                    status.update(label=f"正在运行: 已获取 {len(all_rows)} 条记录...")
-                    
+                    # 构建查询
                     query = utils.supabase.table('trade_records')\
                         .select(needed_columns)\
-                        .gte('transaction_date', start_d).lte('transaction_date', end_d)\
-                        .order("transaction_date", desc=True)\
-                        .order("unique_record_id", desc=True) 
+                        .gte('transaction_date', start_d).lte('transaction_date', end_d)
                     
+                    # 应用筛选
                     if ana_origins: query = query.in_('origin_country_code', ana_origins)
                     if ana_dests: query = query.in_('dest_country_code', ana_dests)
                     
-                    response = query.range(range_start, range_end).execute()
+                    # ⚡️ 性能优化关键点：
+                    # 1. 不再使用 range (offset)，而是使用 .lt (less than) 上一次的 last_id
+                    # 2. 我们依赖 unique_record_id 的索引来快速定位
+                    if last_id:
+                        query = query.lt('unique_record_id', last_id)
+                    
+                    # 3. 必须按 ID 倒序排列，确保游标逻辑正确
+                    response = query.order("unique_record_id", desc=True).limit(batch_size).execute()
+                    
                     rows = response.data
-                    if not rows: break
+                    if not rows: 
+                        break # 没有数据了，停止
                     
                     all_rows.extend(rows)
-                    if page < 50: progress_bar.progress((page + 1) / 50)
-                    if len(rows) < batch_size: break
-                    page += 1
+                    total_fetched += len(rows)
+                    
+                    # 更新游标：记录这一批最后一条数据的 ID
+                    last_id = rows[-1]['unique_record_id']
+                    
+                    # 更新进度条 (假定大概 50w 条，只是视觉效果)
+                    if total_fetched < 500000:
+                        progress_bar.progress(min(total_fetched / 500000, 1.0))
+                    
+                    # 如果取到的数据少于 batch_size，说明是最后一页了
+                    if len(rows) < batch_size:
+                        break
                 
                 progress_bar.empty()
                 msg_placeholder.empty()
                 status.update(label=f"✅ 提取完成: 共 {len(all_rows)} 条记录", state="complete")
                 
                 if all_rows:
-                    st.session_state['analysis_df'] = pd.DataFrame(all_rows)
+                    # 转为 DataFrame
+                    df = pd.DataFrame(all_rows)
+                    
+                    # 💡 提示：因为我们按 ID 下载，所以这里要在内存里重新按日期排个序，方便后续画图
+                    df = df.sort_values(by='transaction_date', ascending=False)
+                    
+                    st.session_state['analysis_df'] = df
                     st.session_state['report_active'] = True
                 else:
                     st.session_state['report_active'] = False
                     st.warning("数据库中无该时间段数据")
+                    
             except Exception as e: 
                 status.update(label="提取出错", state="error")
                 st.error(f"Error: {str(e)}")
