@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime, timedelta, date
 import config
 import utils  # 引用 utils.py
@@ -376,25 +378,66 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 price_sp = df_clean_qty.groupby('Species').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
                 st.plotly_chart(px.bar(price_sp, x="Species", y="avg_price", title=f"Avg Price by Species (USD/{target_unit})", color="avg_price", color_continuous_scale="Greens", text_auto='.0f'), use_container_width=True)
             
-            # --- 🔥 [新增] Monthly Price Trend Chart ---
-            st.markdown("##### 📉 Monthly Unit Price Trend (月度单价趋势)")
-            # 计算每月每种树种的加权平均价
-            price_trend = df_clean_qty.groupby(['Month', 'Species']).apply(
-                lambda x: pd.Series({'avg_price': x['total_value_usd'].sum() / x['quantity'].sum() if x['quantity'].sum() > 0 else 0})
-            ).reset_index()
+            # --- 🔥 [新增] Monthly Price & Volume Trend (Line + Bar Dual Axis) ---
+            st.markdown("##### 📉 Monthly Price (Line) & Volume (Bar) Trend (量价趋势)")
             
-            # 绘制折线图
-            fig_trend = px.line(
-                price_trend, 
-                x="Month", 
-                y="avg_price", 
-                color="Species",
-                title=f"Unit Price Trend - Over Selected Period ({target_unit})",
-                markers=True,
-                category_orders={"Month": sorted_months}
+            # 1. 准备聚合数据
+            trend_df = df_clean_qty.groupby(['Month', 'Species'])[['quantity', 'total_value_usd']].sum().reset_index()
+            trend_df['avg_price'] = trend_df.apply(lambda x: x['total_value_usd']/x['quantity'] if x['quantity']>0 else 0, axis=1)
+            
+            # 2. 获取唯一列表用于颜色映射
+            species_list = sorted(trend_df['Species'].unique())
+            colors = px.colors.qualitative.Plotly # 使用 Plotly 默认色盘
+            
+            # 3. 创建双轴图
+            fig_combo = make_subplots(specs=[[{"secondary_y": True}]])
+            
+            for i, sp in enumerate(species_list):
+                sp_data = trend_df[trend_df['Species'] == sp]
+                # 循环取色，保证同一个树种的柱子和线颜色一致
+                color_val = colors[i % len(colors)]
+                
+                # Bar: Volume (左轴) - 半透明
+                fig_combo.add_trace(
+                    go.Bar(
+                        x=sp_data['Month'], 
+                        y=sp_data['quantity'], 
+                        name=f"{sp} (Vol)",
+                        marker_color=color_val,
+                        opacity=0.35, # 调低透明度，让柱子不抢眼
+                        legendgroup=sp # 关联图例
+                    ),
+                    secondary_y=False
+                )
+                
+                # Line: Price (右轴) - 实线
+                fig_combo.add_trace(
+                    go.Scatter(
+                        x=sp_data['Month'], 
+                        y=sp_data['avg_price'], 
+                        name=f"{sp} (Price)",
+                        mode='lines+markers',
+                        line=dict(color=color_val, width=2),
+                        marker=dict(size=6),
+                        legendgroup=sp
+                    ),
+                    secondary_y=True
+                )
+
+            # 4. 布局调整
+            fig_combo.update_layout(
+                title=f"Price vs Volume Trend ({target_unit})",
+                barmode='stack', # 柱子堆叠，显示总量趋势
+                hovermode="x unified", # 统一悬停显示
+                xaxis=dict(categoryorder='category ascending'),
+                legend=dict(orientation="h", y=-0.15) # 图例放到底部
             )
-            fig_trend.update_layout(yaxis_title=f"Avg Price (USD/{target_unit})", hovermode="x unified")
-            st.plotly_chart(fig_trend, use_container_width=True)
+            
+            # 5. 设置坐标轴标题
+            fig_combo.update_yaxes(title_text=f"Volume ({target_unit})", secondary_y=False, showgrid=False)
+            fig_combo.update_yaxes(title_text="Avg Price (USD)", secondary_y=True, showgrid=True) # 价格轴显示网格
+            
+            st.plotly_chart(fig_combo, use_container_width=True)
 
         else:
             st.warning("No data for Price Analysis.")
