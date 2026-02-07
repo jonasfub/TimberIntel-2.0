@@ -167,7 +167,7 @@ if is_date_valid and start_d and end_d:
         batch_size = 5000       # 单次请求最大行数
         chunk_days = 7          # 每次只取 7 天的数据
         
-        # 🔥 [修改] 增加了 'port_of_departure' 字段
+        # 增加 'port_of_departure' 字段
         needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,port_of_departure,exporter_name,importer_name,unique_record_id"
         
         with st.status("🚀 Starting Data Extraction (正在启动分片提取)...", expanded=True) as status:
@@ -236,11 +236,9 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
     df = st.session_state['analysis_df']
 
     # --- 数据清洗 ---
-    # 1. Port of Arrival (卸货港)
     df['port_of_arrival'] = df['port_of_arrival'].fillna('Unknown').astype(str).apply(
         lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in x else x.strip()
     )
-    # 🔥 [新增] 2. Port of Departure (装货港)
     if 'port_of_departure' in df.columns:
         df['port_of_departure'] = df['port_of_departure'].fillna('Unknown').astype(str).apply(
             lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in x else x.strip()
@@ -248,7 +246,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
     else:
         df['port_of_departure'] = 'Unknown'
 
-    # 港口名称映射 (Arrival)
     name_fix_map = {
         "VIZAG": "Visakhapatnam", "VIZAG SEA": "Visakhapatnam",
         "GOA": "Mormugao (Goa)", "GOA PORT": "Mormugao (Goa)"
@@ -266,7 +263,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
     else:
         df['Species'] = 'Unknown'
 
-    # 智能树种清洗
     current_category_type = None
     if "Softwood" in selected_category: current_category_type = "Softwood"
     elif "Hardwood" in selected_category: current_category_type = "Hardwood"
@@ -277,7 +273,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         if forbidden_species:
             df = df[~df['Species'].isin(forbidden_species)]
     
-    # 本地筛选
     if ana_species_selected: df = df[df['Species'].isin(ana_species_selected)]
     if ana_origins: df = df[df['origin_country_code'].isin(ana_origins)]
     if ana_dests: df = df[df['dest_country_code'].isin(ana_dests)]
@@ -285,7 +280,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
     if df.empty:
         st.warning("No data after local filtering (本地筛选后无数据)")
     else:
-        # 指标计算
         df['unit_price'] = df.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 and pd.notnull(x['total_value_usd']) else 0, axis=1)
         
         def get_country_name_en(code):
@@ -381,6 +375,27 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             with r3_c2:
                 price_sp = df_clean_qty.groupby('Species').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
                 st.plotly_chart(px.bar(price_sp, x="Species", y="avg_price", title=f"Avg Price by Species (USD/{target_unit})", color="avg_price", color_continuous_scale="Greens", text_auto='.0f'), use_container_width=True)
+            
+            # --- 🔥 [新增] Monthly Price Trend Chart ---
+            st.markdown("##### 📉 Monthly Unit Price Trend (月度单价趋势)")
+            # 计算每月每种树种的加权平均价
+            price_trend = df_clean_qty.groupby(['Month', 'Species']).apply(
+                lambda x: pd.Series({'avg_price': x['total_value_usd'].sum() / x['quantity'].sum() if x['quantity'].sum() > 0 else 0})
+            ).reset_index()
+            
+            # 绘制折线图
+            fig_trend = px.line(
+                price_trend, 
+                x="Month", 
+                y="avg_price", 
+                color="Species",
+                title=f"Unit Price Trend - Over Selected Period ({target_unit})",
+                markers=True,
+                category_orders={"Month": sorted_months}
+            )
+            fig_trend.update_layout(yaxis_title=f"Avg Price (USD/{target_unit})", hovermode="x unified")
+            st.plotly_chart(fig_trend, use_container_width=True)
+
         else:
             st.warning("No data for Price Analysis.")
         st.divider()
@@ -409,36 +424,22 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         df['port_of_arrival'] = df['port_of_arrival'].fillna('Unknown').replace('', 'Unknown')
         df['port_of_departure'] = df['port_of_departure'].fillna('Unknown').replace('', 'Unknown')
 
-        # --- 🔥 [新增] Part A: Port of Loading (装货港) ---
+        # --- Part A: Port of Loading (装货港) ---
         st.markdown("##### 🛫 Top 10 Port of Loading (装货港/起运港)")
         pl1, pl2 = st.columns(2)
-        
         with pl1:
-            # Value Chart (Loading)
             top_val_dep = df.groupby('port_of_departure')['total_value_usd'].sum().nlargest(10).index.tolist()
             chart_dep_val = df[df['port_of_departure'].isin(top_val_dep)].groupby(['port_of_departure', 'Species'])['total_value_usd'].sum().reset_index()
-            fig_pdv = px.bar(
-                chart_dep_val, x="port_of_departure", y="total_value_usd", color="Species", 
-                title="Loading Port - by Value (USD)", 
-                category_orders={"port_of_departure": top_val_dep}
-            )
-            st.plotly_chart(fig_pdv, use_container_width=True)
-            
+            st.plotly_chart(px.bar(chart_dep_val, x="port_of_departure", y="total_value_usd", color="Species", title="Loading Port - by Value (USD)", category_orders={"port_of_departure": top_val_dep}), use_container_width=True)
         with pl2:
-            # Volume Chart (Loading)
             if not df_clean_qty.empty:
                 top_qty_dep = df_clean_qty.groupby('port_of_departure')['quantity'].sum().nlargest(10).index.tolist()
                 chart_dep_qty = df_clean_qty[df_clean_qty['port_of_departure'].isin(top_qty_dep)].groupby(['port_of_departure', 'Species'])['quantity'].sum().reset_index()
-                fig_pdq = px.bar(
-                    chart_dep_qty, x="port_of_departure", y="quantity", color="Species", 
-                    title=f"Loading Port - by Volume ({target_unit})", 
-                    category_orders={"port_of_departure": top_qty_dep}
-                )
-                st.plotly_chart(fig_pdq, use_container_width=True)
+                st.plotly_chart(px.bar(chart_dep_qty, x="port_of_departure", y="quantity", color="Species", title=f"Loading Port - by Volume ({target_unit})", category_orders={"port_of_departure": top_qty_dep}), use_container_width=True)
             else:
                 st.info("No volume data available for Loading Ports.")
 
-        st.markdown("---") # 分割线
+        st.markdown("---")
 
         # --- Part B: Port of Discharge (卸货港) ---
         st.markdown("##### 🛬 Top 10 Port of Discharge (卸货港/目的港)")
@@ -446,22 +447,12 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         with t1:
             top_val_arr = df.groupby('port_of_arrival')['total_value_usd'].sum().nlargest(10).index.tolist()
             chart_arr_val = df[df['port_of_arrival'].isin(top_val_arr)].groupby(['port_of_arrival', 'Species'])['total_value_usd'].sum().reset_index()
-            fig_pav = px.bar(
-                chart_arr_val, x="port_of_arrival", y="total_value_usd", color="Species", 
-                title="Discharge Port - by Value (USD)", 
-                category_orders={"port_of_arrival": top_val_arr}
-            )
-            st.plotly_chart(fig_pav, use_container_width=True)
+            st.plotly_chart(px.bar(chart_arr_val, x="port_of_arrival", y="total_value_usd", color="Species", title="Discharge Port - by Value (USD)", category_orders={"port_of_arrival": top_val_arr}), use_container_width=True)
         with t2:
             if not df_clean_qty.empty:
                 top_qty_arr = df_clean_qty.groupby('port_of_arrival')['quantity'].sum().nlargest(10).index.tolist()
                 chart_arr_qty = df_clean_qty[df_clean_qty['port_of_arrival'].isin(top_qty_arr)].groupby(['port_of_arrival', 'Species'])['quantity'].sum().reset_index()
-                fig_paq = px.bar(
-                    chart_arr_qty, x="port_of_arrival", y="quantity", color="Species", 
-                    title=f"Discharge Port - by Volume ({target_unit})", 
-                    category_orders={"port_of_arrival": top_qty_arr}
-                )
-                st.plotly_chart(fig_paq, use_container_width=True)
+                st.plotly_chart(px.bar(chart_arr_qty, x="port_of_arrival", y="quantity", color="Species", title=f"Discharge Port - by Volume ({target_unit})", category_orders={"port_of_arrival": top_qty_arr}), use_container_width=True)
             else:
                 st.info("No volume data available for Discharge Ports.")
 
@@ -513,7 +504,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
 
         st.divider()
         
-        # 详情表 (Added port_of_departure)
+        # 详情表
         st.subheader("📋 Detailed Records (详细数据)")
         cols = ['transaction_date', 'hs_code', 'Species', 'origin_name', 'dest_name', 'port_of_departure', 'port_of_arrival', 'quantity', 'quantity_unit', 'total_value_usd', 'unit_price', 'exporter_name', 'importer_name']
         final_cols = [c for c in cols if c in df.columns]
