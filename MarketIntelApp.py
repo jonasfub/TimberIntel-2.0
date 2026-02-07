@@ -22,33 +22,61 @@ if 'analysis_df' not in st.session_state:
 with st.sidebar:
     st.header("📊 Analysis Settings (分析设置)")
     
-    # 简单的 Token 状态检查
-    if utils.get_auto_token(): # 尝试获取或刷新 Token
+    # API Token 检查
+    if utils.get_auto_token():
         st.success("✅ API Token Valid (API 有效)")
     else:
         st.info("⚠️ API Inactive (Token 失效 - 将尝试自动刷新)")
         
     st.divider()
     
-    # [优化] 双语标签
+    # 1. 产品分类
     selected_category = st.selectbox(
         "Product Category (产品分类)", 
         list(config.HS_CODES_MAP.keys())
     )
     target_hs_codes = config.HS_CODES_MAP[selected_category]
     
-    # [修复] 日期范围选择器
-    # 1. 使用 date() 确保默认值没有时间戳，防止 Streamlit 重置组件
-    # 2. 添加 key 保持状态
+    st.divider()
+
+    # 2. 日期范围逻辑修复 (Date Range Fix)
+    st.markdown("📅 **Time Period (时间范围)**")
+
+    # 定义回调函数：点击按钮时，直接修改 Session State 中的日期 Key
+    def set_date_range(range_type):
+        today = datetime.now().date()
+        if range_type == '7d':
+            st.session_state['global_date_range'] = (today - timedelta(days=7), today)
+        elif range_type == '30d':
+            st.session_state['global_date_range'] = (today - timedelta(days=30), today)
+        elif range_type == '365d':
+            st.session_state['global_date_range'] = (today - timedelta(days=365), today)
+        elif range_type == 'ytd': # Year to Date (今年以来)
+            st.session_state['global_date_range'] = (date(today.year, 1, 1), today)
+
+    # 快捷按钮布局
+    c_d1, c_d2, c_d3, c_d4 = st.columns(4)
+    with c_d1: 
+        st.button("7D", help="Last 7 Days", on_click=set_date_range, args=('7d',), use_container_width=True)
+    with c_d2: 
+        st.button("30D", help="Last 30 Days", on_click=set_date_range, args=('30d',), use_container_width=True)
+    with c_d3: 
+        st.button("YTD", help="Year to Date", on_click=set_date_range, args=('ytd',), use_container_width=True)
+    with c_d4: 
+        st.button("1Y", help="Last 365 Days", on_click=set_date_range, args=('365d',), use_container_width=True)
+
+    # 初始化 Session State (如果第一次加载)
     today = datetime.now().date()
-    default_start = today - timedelta(days=365)
-    
+    if 'global_date_range' not in st.session_state:
+        # 默认过去 365 天
+        st.session_state['global_date_range'] = (today - timedelta(days=365), today)
+
+    # 日期选择器 (关键：去掉了 value 参数，完全依赖 key='global_date_range' 来同步状态)
     date_range = st.date_input(
-        "Date Range (日期范围)", 
-        value=(default_start, today),
+        "Custom Range (自定义范围)", 
         max_value=today,
         format="YYYY-MM-DD",
-        key="global_date_range"
+        key="global_date_range" # 这个 Key 绑定了 Session State，按钮修改 State 后会自动更新这里
     )
 
 # ==========================================
