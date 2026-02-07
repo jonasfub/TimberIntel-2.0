@@ -39,44 +39,79 @@ with st.sidebar:
     
     st.divider()
 
-    # 2. 日期范围逻辑修复 (Date Range Fix)
+    # 2. 日期范围逻辑 (Date Range Logic)
     st.markdown("📅 **Time Period (时间范围)**")
 
-    # 定义回调函数：点击按钮时，直接修改 Session State 中的日期 Key
+    # --- 核心日期计算逻辑 ---
     def set_date_range(range_type):
         today = datetime.now().date()
-        if range_type == '7d':
-            st.session_state['global_date_range'] = (today - timedelta(days=7), today)
-        elif range_type == '30d':
-            st.session_state['global_date_range'] = (today - timedelta(days=30), today)
-        elif range_type == '365d':
-            st.session_state['global_date_range'] = (today - timedelta(days=365), today)
-        elif range_type == 'ytd': # Year to Date (今年以来)
-            st.session_state['global_date_range'] = (date(today.year, 1, 1), today)
+        
+        if range_type == 'last_month':
+            # 逻辑：本月1号 - 1天 = 上月最后一天
+            first_of_this_month = today.replace(day=1)
+            end_date = first_of_this_month - timedelta(days=1)
+            start_date = end_date.replace(day=1)
+            st.session_state['global_date_range'] = (start_date, end_date)
+            
+        elif range_type == 'last_quarter':
+            # 逻辑：
+            # 1. 计算当前季度的起始月份 (1, 4, 7, 10)
+            # 2. 当前季度1号 - 1天 = 上季度最后一天
+            # 3. 上季度最后一天向前推2个月的1号 = 上季度第一天
+            current_month = today.month
+            curr_q_start_month = 3 * ((current_month - 1) // 3) + 1
+            curr_q_start_date = date(today.year, curr_q_start_month, 1)
+            
+            end_date = curr_q_start_date - timedelta(days=1)
+            start_date = date(end_date.year, end_date.month - 2, 1)
+            st.session_state['global_date_range'] = (start_date, end_date)
+            
+        elif range_type == 'last_year':
+            # 逻辑：去年的1月1日 到 12月31日
+            last_year_val = today.year - 1
+            st.session_state['global_date_range'] = (date(last_year_val, 1, 1), date(last_year_val, 12, 31))
 
-    # 快捷按钮布局
-    c_d1, c_d2, c_d3, c_d4 = st.columns(4)
+    # --- 快捷按钮布局 (3列) ---
+    c_d1, c_d2, c_d3 = st.columns(3)
+    
     with c_d1: 
-        st.button("7D", help="Last 7 Days", on_click=set_date_range, args=('7d',), use_container_width=True)
+        st.button(
+            "Last Month\n(上月)", 
+            help="Previous Calendar Month (上一个完整自然月)", 
+            on_click=set_date_range, args=('last_month',), 
+            use_container_width=True
+        )
     with c_d2: 
-        st.button("30D", help="Last 30 Days", on_click=set_date_range, args=('30d',), use_container_width=True)
+        st.button(
+            "Last Q\n(上季)", 
+            help="Previous Calendar Quarter (上一个完整自然季度)", 
+            on_click=set_date_range, args=('last_quarter',), 
+            use_container_width=True
+        )
     with c_d3: 
-        st.button("YTD", help="Year to Date", on_click=set_date_range, args=('ytd',), use_container_width=True)
-    with c_d4: 
-        st.button("1Y", help="Last 365 Days", on_click=set_date_range, args=('365d',), use_container_width=True)
+        st.button(
+            "Last Year\n(去年)", 
+            help="Previous Calendar Year (上一个完整自然年)", 
+            on_click=set_date_range, args=('last_year',), 
+            use_container_width=True
+        )
 
-    # 初始化 Session State (如果第一次加载)
+    # --- 初始化默认值 ---
     today = datetime.now().date()
     if 'global_date_range' not in st.session_state:
-        # 默认过去 365 天
-        st.session_state['global_date_range'] = (today - timedelta(days=365), today)
+        # 默认初始化为: 上一个月 (通常比去年更常用)
+        first_of_this_month = today.replace(day=1)
+        end_date = first_of_this_month - timedelta(days=1)
+        start_date = end_date.replace(day=1)
+        st.session_state['global_date_range'] = (start_date, end_date)
 
-    # 日期选择器 (关键：去掉了 value 参数，完全依赖 key='global_date_range' 来同步状态)
+    # --- 日期选择器 ---
+    # 关键：不要设置 value，只设置 key，让 key 绑定 Session State
     date_range = st.date_input(
         "Custom Range (自定义范围)", 
         max_value=today,
         format="YYYY-MM-DD",
-        key="global_date_range" # 这个 Key 绑定了 Session State，按钮修改 State 后会自动更新这里
+        key="global_date_range" 
     )
 
 # ==========================================
