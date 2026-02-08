@@ -37,9 +37,8 @@ df = st.session_state['analysis_df'].copy()
 # ==========================================
 # 3. 数据清洗与增强 (关键修复步骤 🛠️)
 # ==========================================
-# 主页存入 session_state 的通常是原始数据，这里必须重新计算 Month, Species 等字段
 
-# 3.1 基础数值转换
+# 3.1 基础数值转换与空值填充
 df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0)
 df['total_value_usd'] = pd.to_numeric(df['total_value_usd'], errors='coerce').fillna(0)
 
@@ -49,28 +48,31 @@ target_unit = df['quantity_unit'].mode()[0] if not df['quantity_unit'].empty els
 # 过滤无效数据 (数量为0的行)
 df = df[df['quantity'] > 0]
 
-# 3.2 生成 'Month' 列 (用于时间轴)
-if 'Month' not in df.columns:
-    df['transaction_date'] = pd.to_datetime(df['transaction_date'])
-    df['Month'] = df['transaction_date'].dt.to_period('M').astype(str)
+# 3.2 生成 'Month' 列 (修复 KeyError)
+# 确保 transaction_date 是 datetime 类型
+df['transaction_date'] = pd.to_datetime(df['transaction_date'])
+df['Month'] = df['transaction_date'].dt.to_period('M').astype(str)
 
-# 3.3 生成 'Species' 列 (调用 utils)
+# 3.3 生成 'Species' 列 (修复 KeyError)
 if 'Species' not in df.columns:
     if 'product_desc_text' in df.columns:
+        # 使用 utils 中的函数识别树种
         df['Species'] = df['product_desc_text'].apply(utils.identify_species)
     else:
         df['Species'] = 'Unknown'
 
-# 3.4 生成国家全名 (调用 config)
-if 'origin_name' not in df.columns:
-    def get_country_name_en(code):
-        if pd.isna(code) or code == "" or code is None: return "Unknown"
-        full_name = config.COUNTRY_NAME_MAP.get(code, code)
-        full_name_str = str(full_name)
-        if '(' in full_name_str: return full_name_str.split(' (')[0]
-        return full_name_str
+# 3.4 生成国家全名 'origin_name' & 'dest_name' (修复 KeyError)
+def get_country_name_en(code):
+    if pd.isna(code) or code == "" or code is None: return "Unknown"
+    full_name = config.COUNTRY_NAME_MAP.get(code, code)
+    full_name_str = str(full_name)
+    if '(' in full_name_str: return full_name_str.split(' (')[0]
+    return full_name_str
 
+if 'origin_name' not in df.columns:
     df['origin_name'] = df['origin_country_code'].apply(get_country_name_en)
+
+if 'dest_name' not in df.columns:
     df['dest_name'] = df['dest_country_code'].apply(get_country_name_en)
 
 # ==========================================
@@ -121,53 +123,74 @@ with st.container():
 st.divider()
 
 # --- Row 2: 桑基图 (Sankey) ---
+# [修复说明] 防止空图表：1.填充NaN 2.给节点加前缀防止闭环
 st.subheader("2. 🌊 Trade Flow: Origin ➡ Species ➡ Dest")
 st.caption("Trace the timber flow. Hover to see details.")
 
-# 桑基图数据处理
 sankey_df = df.copy()
 
-# 为了图表美观，只取 Top N 的节点，其余归为 "Others" (防止线条太密)
+# 1. 强制转字符串，防止 NaN 报错
+sankey_df['origin_name'] = sankey_df['origin_name'].fillna("Unknown Origin").astype(str)
+sankey_df['dest_name'] = sankey_df['dest_name'].fillna("Unknown Dest").astype(str)
+sankey_df['Species'] = sankey_df['Species'].fillna("Unknown Species").astype(str)
+
+# 2. 筛选 Top N (简化图表，防止太乱)
 top_n = 15
 top_origins = sankey_df.groupby('origin_name')['quantity'].sum().nlargest(top_n).index
 top_dests = sankey_df.groupby('dest_name')['quantity'].sum().nlargest(top_n).index
 
-sankey_df['origin_final'] = sankey_df['origin_name'].apply(lambda x: x if x in top_origins else 'Other Origins')
-sankey_df['dest_final'] = sankey_df['dest_name'].apply(lambda x: x if x in top_dests else 'Other Dests')
+# 3. 添加前缀 (关键步骤：防止 Origin='China' 和 Dest='China' 造成死循环)
+def format_origin(x):
+    name = x if x in top_origins else 'Other Origins'
+    return f"🛫 {name}"  # 添加起飞图标
 
-# 构造节点 Link: Origin -> Species
-flow1 = sankey_df.groupby(['origin_final', 'Species'])['quantity'].sum().reset_index()
+def format_dest(x):
+    name = x if x in top_dests else 'Other Dests'
+    return f"🛬 {name}"  # 添加降落图标
+
+sankey_df['source_node'] = sankey_df['origin_name'].apply(format_origin)
+sankey_df['target_node'] = sankey_df['dest_name'].apply(format_dest)
+sankey_df['mid_node']    = sankey_df['Species'] 
+
+# 4. 构造连接数据
+# Link 1: Origin -> Species
+flow1 = sankey_df.groupby(['source_node', 'mid_node'])['quantity'].sum().reset_index()
 flow1.columns = ['source', 'target', 'value']
 
-# 构造节点 Link: Species -> Dest
-flow2 = sankey_df.groupby(['Species', 'dest_final'])['quantity'].sum().reset_index()
+# Link 2: Species -> Dest
+flow2 = sankey_df.groupby(['mid_node', 'target_node'])['quantity'].sum().reset_index()
 flow2.columns = ['source', 'target', 'value']
 
 links_df = pd.concat([flow1, flow2], axis=0)
+links_df = links_df[links_df['value'] > 0] # 过滤掉 0 值
 
-# 生成唯一节点列表
-all_nodes = list(set(links_df['source']).union(set(links_df['target'])))
-nodes = [{"name": n} for n in all_nodes]
-links = links_df.to_dict(orient='records')
+# 5. 渲染
+if not links_df.empty:
+    unique_nodes = list(set(links_df['source']).union(set(links_df['target'])))
+    nodes = [{"name": n} for n in unique_nodes]
+    links = links_df.to_dict(orient='records')
 
-option_sankey = {
-    "tooltip": {"trigger": "item", "triggerOn": "mousemove"},
-    "series": [{
-        "type": "sankey",
-        "layout": "none",
-        "data": nodes,
-        "links": links,
-        "emphasis": {"focus": "adjacency"}, # 悬停高亮相关连线
-        "levels": [
-            {"depth": 0, "itemStyle": {"color": "#fbb4ae"}, "lineStyle": {"color": "source", "opacity": 0.2}},
-            {"depth": 1, "itemStyle": {"color": "#b3cde3"}, "lineStyle": {"color": "source", "opacity": 0.2}},
-            {"depth": 2, "itemStyle": {"color": "#ccebc5"}, "lineStyle": {"color": "source", "opacity": 0.2}}
-        ],
-        "lineStyle": {"curveness": 0.5},
-        "label": {"color": "rgba(0,0,0,0.7)", "fontFamily": "Arial"}
-    }]
-}
-st_echarts(options=option_sankey, height="600px", key="echart_sankey")
+    option_sankey = {
+        "tooltip": {"trigger": "item", "triggerOn": "mousemove"},
+        "series": [{
+            "type": "sankey",
+            "layout": "none",
+            "data": nodes,
+            "links": links,
+            "emphasis": {"focus": "adjacency"},
+            "nodeWidth": 20,
+            "levels": [
+                {"depth": 0, "itemStyle": {"color": "#fbb4ae"}, "lineStyle": {"color": "source", "opacity": 0.2}},
+                {"depth": 1, "itemStyle": {"color": "#b3cde3"}, "lineStyle": {"color": "source", "opacity": 0.2}},
+                {"depth": 2, "itemStyle": {"color": "#ccebc5"}, "lineStyle": {"color": "source", "opacity": 0.2}}
+            ],
+            "lineStyle": {"curveness": 0.5},
+            "label": {"color": "rgba(0,0,0,0.7)", "fontFamily": "Arial", "fontSize": 12}
+        }]
+    }
+    st_echarts(options=option_sankey, height="600px", key="echart_sankey")
+else:
+    st.warning("⚠️ No valid flow data available for Sankey diagram.")
 
 st.divider()
 
@@ -177,12 +200,15 @@ c_sun, c_info = st.columns([3, 1])
 with c_sun:
     st.subheader("3. 🍩 Market Hierarchy (Origin > Species)")
     
-    # 构造旭日图层级数据
+    # 使用之前处理好的 sankey_df (带有 source_node 分组) 来做旭日图，或者重新聚合
+    # 这里为了名字好看，重新用原始名称聚合
+    sun_df = df.copy()
+    sun_df['origin_group'] = sun_df['origin_name'].apply(lambda x: x if x in top_origins else 'Other Origins')
+    
     sun_data = []
     # 1. 第一层：Origin
-    # 这里用 origin_final 避免国家太多
-    for origin in sankey_df['origin_final'].unique():
-        origin_df = sankey_df[sankey_df['origin_final'] == origin]
+    for origin in sun_df['origin_group'].unique():
+        origin_df = sun_df[sun_df['origin_group'] == origin]
         origin_val = origin_df['quantity'].sum()
         
         children = []
