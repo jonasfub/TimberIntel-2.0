@@ -42,7 +42,7 @@ with st.sidebar:
     st.divider()
 
     # =========================================================
-    # 2. 日期范围逻辑 (Date Range Logic) - [已修改: 纯英文 + Last 6 Months]
+    # 2. 日期范围逻辑 (Date Range Logic)
     # =========================================================
     st.markdown("📅 **Time Period**")
 
@@ -264,7 +264,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
     df = st.session_state['analysis_df']
 
     # --- 🛠️ 关键修复：强制数值转换 (防止 TypeError) ---
-    # 将 quantity 和 total_value_usd 转换为数字，无法转换的变为 NaN，然后填充为 0
     df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0)
     df['total_value_usd'] = pd.to_numeric(df['total_value_usd'], errors='coerce').fillna(0)
     # ----------------------------------------------------
@@ -400,17 +399,19 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
 
         # ============================================
-        # 3. 价格分析 (Price Analysis)
+        # 3. 价格分析 (Price Analysis) - [修改: 分行显示]
         # ============================================
         st.subheader("🏷️ Price Analysis (价格分析)")
         if not df_clean_qty.empty:
-            r3_c1, r3_c2 = st.columns(2)
-            with r3_c1:
-                price_org = df_clean_qty.groupby('origin_name').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
-                st.plotly_chart(px.bar(price_org, x="origin_name", y="avg_price", title=f"Avg Price by Origin (USD/{target_unit})", color="avg_price", color_continuous_scale="Blues", text_auto='.0f'), use_container_width=True)
-            with r3_c2:
-                price_sp = df_clean_qty.groupby('Species').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
-                st.plotly_chart(px.bar(price_sp, x="Species", y="avg_price", title=f"Avg Price by Species (USD/{target_unit})", color="avg_price", color_continuous_scale="Greens", text_auto='.0f'), use_container_width=True)
+            # 移除列布局，直接按顺序展示
+            
+            # Chart 1: Price by Origin
+            price_org = df_clean_qty.groupby('origin_name').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
+            st.plotly_chart(px.bar(price_org, x="origin_name", y="avg_price", title=f"Avg Price by Origin (USD/{target_unit})", color="avg_price", color_continuous_scale="Blues", text_auto='.0f'), use_container_width=True)
+            
+            # Chart 2: Price by Species
+            price_sp = df_clean_qty.groupby('Species').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
+            st.plotly_chart(px.bar(price_sp, x="Species", y="avg_price", title=f"Avg Price by Species (USD/{target_unit})", color="avg_price", color_continuous_scale="Greens", text_auto='.0f'), use_container_width=True)
             
             # --- 🔥 [新增] Monthly Price & Volume Trend (Line + Bar Dual Axis) ---
             st.markdown("##### 📉 Monthly Price (Line) & Volume (Bar) Trend (量价趋势)")
