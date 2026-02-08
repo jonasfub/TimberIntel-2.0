@@ -4,3 +4,4 @@ supabase
 requests
 xlsxwriter
 plotly
+streamlit-echarts
