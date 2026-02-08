@@ -403,8 +403,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         # ============================================
         st.subheader("🏷️ Price Analysis (价格分析)")
         if not df_clean_qty.empty:
-            # 移除列布局，直接按顺序展示
-            
             # Chart 1: Price by Origin
             price_org = df_clean_qty.groupby('origin_name').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
             st.plotly_chart(px.bar(price_org, x="origin_name", y="avg_price", title=f"Avg Price by Origin (USD/{target_unit})", color="avg_price", color_continuous_scale="Blues", text_auto='.0f'), use_container_width=True)
@@ -413,68 +411,43 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             price_sp = df_clean_qty.groupby('Species').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
             st.plotly_chart(px.bar(price_sp, x="Species", y="avg_price", title=f"Avg Price by Species (USD/{target_unit})", color="avg_price", color_continuous_scale="Greens", text_auto='.0f'), use_container_width=True)
             
-            # --- 🔥 [新增] Monthly Price & Volume Trend (Line + Bar Dual Axis) ---
-            st.markdown("##### 📉 Monthly Price (Line) & Volume (Bar) Trend (量价趋势)")
+            # --- 🔥 [修改] Monthly Price & Volume Trend (Split into two distinct Bar Charts) ---
+            st.markdown("##### 📉 Monthly Volume & Price Trends (月度量价走势 - 拆分)")
             
             # 1. 准备聚合数据
             trend_df = df_clean_qty.groupby(['Month', 'Species'])[['quantity', 'total_value_usd']].sum().reset_index()
             trend_df['avg_price'] = trend_df.apply(lambda x: x['total_value_usd']/x['quantity'] if x['quantity']>0 else 0, axis=1)
             
-            # 2. 获取唯一列表用于颜色映射
-            species_list = sorted(trend_df['Species'].unique())
-            colors = px.colors.qualitative.Plotly # 使用 Plotly 默认色盘
-            
-            # 3. 创建双轴图
-            fig_combo = make_subplots(specs=[[{"secondary_y": True}]])
-            
-            for i, sp in enumerate(species_list):
-                sp_data = trend_df[trend_df['Species'] == sp]
-                # 循环取色，保证同一个树种的柱子和线颜色一致
-                color_val = colors[i % len(colors)]
-                
-                # Bar: Volume (左轴) - 半透明
-                fig_combo.add_trace(
-                    go.Bar(
-                        x=sp_data['Month'], 
-                        y=sp_data['quantity'], 
-                        name=f"{sp} (Vol)",
-                        marker_color=color_val,
-                        opacity=0.35, # 调低透明度，让柱子不抢眼
-                        legendgroup=sp # 关联图例
-                    ),
-                    secondary_y=False
-                )
-                
-                # Line: Price (右轴) - 实线
-                fig_combo.add_trace(
-                    go.Scatter(
-                        x=sp_data['Month'], 
-                        y=sp_data['avg_price'], 
-                        name=f"{sp} (Price)",
-                        mode='lines+markers+text', # 修改模式: 增加 text
-                        text=sp_data['avg_price'].apply(lambda x: f"{x:.0f}"), # 设置标签文本 (保留整数)
-                        textposition="top center", # 标签位置: 点的上方
-                        line=dict(color=color_val, width=2),
-                        marker=dict(size=6),
-                        legendgroup=sp
-                    ),
-                    secondary_y=True
-                )
-
-            # 4. 布局调整
-            fig_combo.update_layout(
-                title=f"Price vs Volume Trend ({target_unit})",
-                barmode='stack', # 柱子堆叠，显示总量趋势
-                hovermode="x unified", # 统一悬停显示
-                xaxis=dict(categoryorder='category ascending'),
-                legend=dict(orientation="h", y=-0.15) # 图例放到底部
+            # 2. Chart A: Monthly Volume Trend (Bar) - Row 1
+            st.markdown("**1. Monthly Volume Trend (月度数量趋势)**")
+            fig_vol = px.bar(
+                trend_df, 
+                x="Month", 
+                y="quantity", 
+                color="Species",
+                title=f"Monthly Volume ({target_unit})",
+                category_orders={"Month": sorted_months},
+                barmode='stack' # 堆叠显示总量
             )
+            st.plotly_chart(fig_vol, use_container_width=True)
             
-            # 5. 设置坐标轴标题
-            fig_combo.update_yaxes(title_text=f"Volume ({target_unit})", secondary_y=False, showgrid=False)
-            fig_combo.update_yaxes(title_text="Avg Price (USD)", secondary_y=True, showgrid=True) # 价格轴显示网格
+            # 3. Chart B: Monthly Price Trend (Bar) - Row 2
+            # 注意：单价不应该堆叠（叠加单价没有意义），所以这里使用 barmode='group' 分组显示
+            st.markdown("**2. Monthly Unit Price Trend (月度单价趋势)**")
+            fig_price = px.bar(
+                trend_df, 
+                x="Month", 
+                y="avg_price", 
+                color="Species",
+                title="Monthly Avg Unit Price (USD)",
+                category_orders={"Month": sorted_months},
+                barmode='group', # 分组显示，方便对比不同树种的价格
+                text_auto='.0f'
+            )
+            # 优化 Price Chart 的显示，避免柱子太细
+            fig_price.update_layout(bargap=0.15, bargroupgap=0.1)
             
-            st.plotly_chart(fig_combo, use_container_width=True)
+            st.plotly_chart(fig_price, use_container_width=True)
 
         else:
             st.warning("No data for Price Analysis.")
