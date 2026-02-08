@@ -165,7 +165,7 @@ with st.container():
 st.divider()
 
 # ------------------------------------------
-# Row 2: Price Trend (单价趋势) [新增] 🆕
+# Row 2: Price Trend (单价趋势) [已修复 🛠️]
 # ------------------------------------------
 st.subheader("2. 💰 Price Trends (单价走势)")
 st.caption(f"Calculated as: Total Value / Total Quantity (Unit: USD / {target_unit})")
@@ -178,10 +178,12 @@ with st.container():
     
     price_series = []
     for sp in species_list:
-        # 重建索引
+        # 重建索引，补全缺失月份
         sp_df = price_agg[price_agg['Species'] == sp].set_index('Month').reindex(months)
-        # 填充 NaN 为 0 或者 null (ECharts line chart 遇到 null 会断开，这样比连成0更合理)
-        sp_price_data = sp_df['avg_price'].where(pd.notnull(sp_df), other=None).tolist()
+        
+        # [🛠️ 修复点] 之前这里导致了 ValueError。
+        # 现在的做法：直接检查 avg_price 列的空值，如果是空值(NaN)，就填 None (让图表断开)
+        sp_price_data = [x if pd.notnull(x) else None for x in sp_df['avg_price']]
         
         price_series.append({
             "name": sp,
