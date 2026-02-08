@@ -237,6 +237,12 @@ if is_date_valid and start_d and end_d:
 if st.session_state.get('report_active', False) and not st.session_state['analysis_df'].empty:
     df = st.session_state['analysis_df']
 
+    # --- 🛠️ 关键修复：强制数值转换 (防止 TypeError) ---
+    # 将 quantity 和 total_value_usd 转换为数字，无法转换的变为 NaN，然后填充为 0
+    df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0)
+    df['total_value_usd'] = pd.to_numeric(df['total_value_usd'], errors='coerce').fillna(0)
+    # ----------------------------------------------------
+
     # --- 数据清洗 ---
     df['port_of_arrival'] = df['port_of_arrival'].fillna('Unknown').astype(str).apply(
         lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in x else x.strip()
@@ -282,7 +288,8 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
     if df.empty:
         st.warning("No data after local filtering (本地筛选后无数据)")
     else:
-        df['unit_price'] = df.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 and pd.notnull(x['total_value_usd']) else 0, axis=1)
+        # 此时 quantity 和 total_value_usd 已经是数字，除法安全
+        df['unit_price'] = df.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 else 0, axis=1)
         
         def get_country_name_en(code):
             if pd.isna(code) or code == "" or code is None: return "Unknown"
@@ -321,6 +328,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 
             if enable_price_clean:
                 min_valid_price = st.number_input("Min Valid Price ($/Unit)", value=5.0, step=1.0)
+                # 修复点：这里的除法现在是安全的，因为之前做了 pd.to_numeric
                 df_clean_qty['calc_price'] = df_clean_qty.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 else 0, axis=1)
                 count_before = len(df_clean_qty)
                 df_clean_qty = df_clean_qty[df_clean_qty['calc_price'] >= min_valid_price]
@@ -389,8 +397,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             species_list = sorted(trend_df['Species'].unique())
             colors = px.colors.qualitative.Plotly # 使用 Plotly 默认色盘
             
-            # ... (前文代码不变) ...
-
             # 3. 创建双轴图
             fig_combo = make_subplots(specs=[[{"secondary_y": True}]])
             
@@ -413,7 +419,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 )
                 
                 # Line: Price (右轴) - 实线
-                # --- 🔥 修改开始: 增加价格 Data Label ---
                 fig_combo.add_trace(
                     go.Scatter(
                         x=sp_data['Month'], 
@@ -428,10 +433,6 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                     ),
                     secondary_y=True
                 )
-                # --- 🔥 修改结束 ---
-
-            # 4. 布局调整
-            # ... (后文代码不变) ...
 
             # 4. 布局调整
             fig_combo.update_layout(
