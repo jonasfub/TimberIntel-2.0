@@ -4,38 +4,77 @@ from streamlit_echarts import st_echarts
 import sys
 import os
 
-# 确保能引用根目录的 config 和 utils (如果报错找不到模块，取消下面两行的注释)
-# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-# import config 
+# ==========================================
+# 0. 路径设置 (为了能引用根目录的 config 和 utils)
+# ==========================================
+# 获取当前文件所在目录的上一级目录 (即项目根目录)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
 
+import utils
+import config
+
+# ==========================================
+# 1. 页面基础设置
+# ==========================================
 st.set_page_config(page_title="Timber Dynamic Cockpit", page_icon="🔮", layout="wide")
 
 st.title("🔮 Timber Intel - Dynamic Cockpit")
-st.caption("Interactive visualization powered by ECharts. Data source: Loaded from Home Page.")
+st.caption("Interactive visualization powered by ECharts. Data source: Shared from Home Page.")
 
 # ==========================================
-# 🛑 1. 守门员逻辑 (检查是否有数据)
+# 2. 守门员逻辑 (检查是否有数据)
 # ==========================================
 if 'analysis_df' not in st.session_state or st.session_state['analysis_df'].empty:
     st.warning("⚠️ No data loaded. Please go to the **Home Page**, select a date range, and click 'Load Analysis Report'.")
     st.info("👈 You can navigate back using the sidebar.")
     st.stop()  # 停止执行后续代码
 
-# 获取数据
+# 获取数据副本，防止修改影响主页
 df = st.session_state['analysis_df'].copy()
 
 # ==========================================
-# 🧹 2. 数据准备 (Data Prep)
+# 3. 数据清洗与增强 (关键修复步骤 🛠️)
 # ==========================================
-# 简单清洗，确保绘图不报错
+# 主页存入 session_state 的通常是原始数据，这里必须重新计算 Month, Species 等字段
+
+# 3.1 基础数值转换
 df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0)
+df['total_value_usd'] = pd.to_numeric(df['total_value_usd'], errors='coerce').fillna(0)
+
+# 获取单位 (取出现最多的单位)
 target_unit = df['quantity_unit'].mode()[0] if not df['quantity_unit'].empty else "Unknown"
 
-# 过滤掉数量为0的行
+# 过滤无效数据 (数量为0的行)
 df = df[df['quantity'] > 0]
 
+# 3.2 生成 'Month' 列 (用于时间轴)
+if 'Month' not in df.columns:
+    df['transaction_date'] = pd.to_datetime(df['transaction_date'])
+    df['Month'] = df['transaction_date'].dt.to_period('M').astype(str)
+
+# 3.3 生成 'Species' 列 (调用 utils)
+if 'Species' not in df.columns:
+    if 'product_desc_text' in df.columns:
+        df['Species'] = df['product_desc_text'].apply(utils.identify_species)
+    else:
+        df['Species'] = 'Unknown'
+
+# 3.4 生成国家全名 (调用 config)
+if 'origin_name' not in df.columns:
+    def get_country_name_en(code):
+        if pd.isna(code) or code == "" or code is None: return "Unknown"
+        full_name = config.COUNTRY_NAME_MAP.get(code, code)
+        full_name_str = str(full_name)
+        if '(' in full_name_str: return full_name_str.split(' (')[0]
+        return full_name_str
+
+    df['origin_name'] = df['origin_country_code'].apply(get_country_name_en)
+    df['dest_name'] = df['dest_country_code'].apply(get_country_name_en)
+
 # ==========================================
-# 📊 3. 图表渲染区域
+# 4. 图表渲染区域
 # ==========================================
 
 # --- Row 1: 趋势分析 (Trend) ---
@@ -48,7 +87,7 @@ with st.container():
     
     series_list = []
     for sp in species_list:
-        # 重建索引以对齐时间轴
+        # 重建索引以对齐时间轴 (防止某个月没有数据导致错位)
         sp_data = trend_data[trend_data['Species'] == sp].set_index('Month').reindex(months, fill_value=0)['quantity'].tolist()
         series_list.append({
             "name": sp,
@@ -56,7 +95,7 @@ with st.container():
             "stack": "total",
             "emphasis": {"focus": "series"},
             "data": sp_data,
-            "itemStyle": {"borderRadius": [0, 0, 0, 0]} 
+            "animationDelay": 300 # 动画效果
         })
 
     option_trend = {
@@ -65,13 +104,13 @@ with st.container():
         "grid": {"left": "3%", "right": "4%", "bottom": "15%", "containLabel": True},
         "toolbox": {
             "feature": {
-                "magicType": {"type": ["line", "bar", "stack"]},
+                "magicType": {"type": ["line", "bar", "stack"]}, # 魔法切换：堆叠/平铺/折线
                 "saveAsImage": {"title": "Save"}
             }
         },
         "dataZoom": [
-            {"type": "slider", "show": True, "xAxisIndex": [0], "start": 0, "end": 100},
-            {"type": "inside", "xAxisIndex": [0]}
+            {"type": "slider", "show": True, "xAxisIndex": [0], "start": 0, "end": 100}, # 底部滑块
+            {"type": "inside", "xAxisIndex": [0]} # 鼠标滚轮缩放
         ],
         "xAxis": {"type": "category", "data": months},
         "yAxis": {"type": "value", "name": f"Vol ({target_unit})"},
@@ -118,7 +157,7 @@ option_sankey = {
         "layout": "none",
         "data": nodes,
         "links": links,
-        "emphasis": {"focus": "adjacency"},
+        "emphasis": {"focus": "adjacency"}, # 悬停高亮相关连线
         "levels": [
             {"depth": 0, "itemStyle": {"color": "#fbb4ae"}, "lineStyle": {"color": "source", "opacity": 0.2}},
             {"depth": 1, "itemStyle": {"color": "#b3cde3"}, "lineStyle": {"color": "source", "opacity": 0.2}},
@@ -141,6 +180,7 @@ with c_sun:
     # 构造旭日图层级数据
     sun_data = []
     # 1. 第一层：Origin
+    # 这里用 origin_final 避免国家太多
     for origin in sankey_df['origin_final'].unique():
         origin_df = sankey_df[sankey_df['origin_final'] == origin]
         origin_val = origin_df['quantity'].sum()
