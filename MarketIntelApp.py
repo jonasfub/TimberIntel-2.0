@@ -41,16 +41,18 @@ with st.sidebar:
     
     st.divider()
 
-    # 2. 日期范围逻辑 (Date Range Logic)
-    st.markdown("📅 **Time Period (时间范围)**")
+    # =========================================================
+    # 2. 日期范围逻辑 (Date Range Logic) - [已修改: 纯英文 + Last 6 Months]
+    # =========================================================
+    st.markdown("📅 **Time Period**")
 
     # --- 核心日期计算逻辑 ---
     def set_date_range(range_type):
         today = datetime.now().date()
+        first_of_this_month = today.replace(day=1)
         
         if range_type == 'last_month':
             # 逻辑：本月1号 - 1天 = 上月最后一天
-            first_of_this_month = today.replace(day=1)
             end_date = first_of_this_month - timedelta(days=1)
             start_date = end_date.replace(day=1)
             st.session_state['global_date_range'] = (start_date, end_date)
@@ -69,28 +71,52 @@ with st.sidebar:
             # 逻辑：去年的1月1日 到 12月31日
             last_year_val = today.year - 1
             st.session_state['global_date_range'] = (date(last_year_val, 1, 1), date(last_year_val, 12, 31))
+            
+        elif range_type == 'last_6_months':
+            # 逻辑：过去6个完整月 (Previous 6 full calendar months)
+            # 结束日期：上个月的最后一天
+            end_date = first_of_this_month - timedelta(days=1)
+            
+            # 开始日期：从本月1号往前推6个月
+            start_month = first_of_this_month.month - 6
+            start_year = first_of_this_month.year
+            if start_month <= 0:
+                start_month += 12
+                start_year -= 1
+            start_date = date(start_year, start_month, 1)
+            st.session_state['global_date_range'] = (start_date, end_date)
 
-    # --- 快捷按钮布局 (3列) ---
-    c_d1, c_d2, c_d3 = st.columns(3)
-    
+    # --- 快捷按钮布局 (2行2列) ---
+    # Row 1
+    c_d1, c_d2 = st.columns(2)
     with c_d1: 
         st.button(
-            "Last Month\n(上月)", 
-            help="Previous Calendar Month (上一个完整自然月)", 
+            "Last Month", 
+            help="Previous full calendar month", 
             on_click=set_date_range, args=('last_month',), 
             use_container_width=True
         )
     with c_d2: 
         st.button(
-            "Last Q\n(上季)", 
-            help="Previous Calendar Quarter (上一个完整自然季度)", 
+            "Last Quarter", 
+            help="Previous full calendar quarter", 
             on_click=set_date_range, args=('last_quarter',), 
             use_container_width=True
         )
+        
+    # Row 2
+    c_d3, c_d4 = st.columns(2)
     with c_d3: 
         st.button(
-            "Last Year\n(去年)", 
-            help="Previous Calendar Year (上一个完整自然年)", 
+            "Last 6 Months", 
+            help="Previous 6 full calendar months", 
+            on_click=set_date_range, args=('last_6_months',), 
+            use_container_width=True
+        )
+    with c_d4: 
+        st.button(
+            "Last Year", 
+            help="Previous full calendar year", 
             on_click=set_date_range, args=('last_year',), 
             use_container_width=True
         )
@@ -104,9 +130,9 @@ with st.sidebar:
         start_date = end_date.replace(day=1)
         st.session_state['global_date_range'] = (start_date, end_date)
 
-    # --- 日期选择器 ---
+    # --- 日期选择器 (纯英文) ---
     date_range = st.date_input(
-        "Custom Range (自定义范围)", 
+        "Custom Range", 
         max_value=today,
         format="YYYY-MM-DD",
         key="global_date_range" 
