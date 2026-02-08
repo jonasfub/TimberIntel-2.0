@@ -1,569 +1,433 @@
 import streamlit as st
-import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from datetime import datetime, timedelta, date
-import config
-import utils  # 引用 utils.py
-
-# --- 页面基础设置 ---
-st.set_page_config(page_title="Timber Intel Core", page_icon="🌲", layout="wide")
-
-st.title("🌲 Timber Intel - Analysis Dashboard (情报分析看板)")
-
-# --- 0. 状态管理 (防止页面刷新后数据丢失) ---
-if 'report_active' not in st.session_state:
-    st.session_state['report_active'] = False
-if 'analysis_df' not in st.session_state:
-    st.session_state['analysis_df'] = pd.DataFrame()
+import pandas as pd
+import datetime
+from logic import load_data_from_db, process_financials
+from ui_style import apply_alpaca_style, kpi_card 
 
 # ==========================================
-# 侧边栏设置 (Sidebar Settings)
+# 1. 页面配置
+# ==========================================
+st.set_page_config(
+    page_title="LogicSync OS", 
+    page_icon="🌲", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+apply_alpaca_style()
+
+st.markdown("### 🌲 LogicSync Dashboard") 
+st.markdown("---")
+
+# ==========================================
+# 2. 数据加载
+# ==========================================
+df_std, df_s, df_b = load_data_from_db()
+
+if df_std is None:
+    st.warning("正在连接数据库或数据为空... 请检查 Secrets 配置。")
+    st.stop()
+
+# --- 辅助函数：智能查找列名 ---
+def find_col(df, candidates):
+    if df.empty: return None
+    cols_lower = {c.lower(): c for c in df.columns}
+    for cand in candidates:
+        if cand.lower() in cols_lower:
+            return cols_lower[cand.lower()]
+    return None
+
+# ==========================================
+# 3. 侧边栏筛选 (已更新)
 # ==========================================
 with st.sidebar:
-    st.header("📊 Analysis Settings (分析设置)")
+    st.header("Filters")
     
-    # API Token 检查
-    if utils.get_auto_token():
-        st.success("✅ API Token Valid (API 有效)")
+    # --- 📅 智能周期选择器 ---
+    st.subheader("📅 Time Period")
+    
+    period_options = [
+        "All Time (Up to Date)", # 🔥 新增：从一开始到现在
+        "This Year (YTD)",       # 本年度至今
+        "Last Year",             # 上一年度
+        "This Quarter",          # 本季度
+        "Last Quarter",          # 上季度
+        "Q1 (Jan-Mar)",          # 固定 Q1
+        "Q2 (Apr-Jun)",          # 固定 Q2
+        "Q3 (Jul-Sep)",          # 固定 Q3
+        "Q4 (Oct-Dec)",          # 固定 Q4
+        "Custom Range"           # 自定义
+    ]
+    
+    selected_period = st.selectbox("Select Period / 选择周期", period_options, index=0)
+    
+    # 获取当前日期
+    today = datetime.date.today()
+    current_year = today.year
+    
+    # 初始化起止日期
+    start_d, end_d = today, today
+
+    # --- 日期计算逻辑 ---
+    if selected_period == "All Time (Up to Date)":
+        # 设置一个足够早的日期 (例如 2020-01-01)
+        start_d = datetime.date(2020, 1, 1)
+        end_d = today
+
+    elif selected_period == "This Year (YTD)":
+        start_d = datetime.date(current_year, 1, 1)
+        end_d = today
+        
+    elif selected_period == "Last Year":
+        start_d = datetime.date(current_year - 1, 1, 1)
+        end_d = datetime.date(current_year - 1, 12, 31)
+        
+    elif selected_period == "This Quarter":
+        curr_q = (today.month - 1) // 3 + 1
+        start_month = (curr_q - 1) * 3 + 1
+        start_d = datetime.date(current_year, start_month, 1)
+        end_d = today
+        
+    elif selected_period == "Last Quarter":
+        curr_q = (today.month - 1) // 3 + 1
+        if curr_q == 1: 
+            start_d = datetime.date(current_year - 1, 10, 1)
+            end_d = datetime.date(current_year - 1, 12, 31)
+        else:
+            prev_q = curr_q - 1
+            start_month = (prev_q - 1) * 3 + 1
+            end_month = start_month + 2
+            next_month_first = datetime.date(current_year, end_month + 1, 1) if end_month < 12 else datetime.date(current_year + 1, 1, 1)
+            end_d = next_month_first - datetime.timedelta(days=1)
+            start_d = datetime.date(current_year, start_month, 1)
+
+    elif "Q1" in selected_period:
+        start_d = datetime.date(current_year, 1, 1); end_d = datetime.date(current_year, 3, 31)
+    elif "Q2" in selected_period:
+        start_d = datetime.date(current_year, 4, 1); end_d = datetime.date(current_year, 6, 30)
+    elif "Q3" in selected_period:
+        start_d = datetime.date(current_year, 7, 1); end_d = datetime.date(current_year, 9, 30)
+    elif "Q4" in selected_period:
+        start_d = datetime.date(current_year, 10, 1); end_d = datetime.date(current_year, 12, 31)
+        
+    elif selected_period == "Custom Range":
+        c_dates = st.date_input("Custom Range", (datetime.date(current_year, 1, 1), today))
+        if isinstance(c_dates, tuple) and len(c_dates) == 2:
+            start_d, end_d = c_dates
+        else:
+            start_d, end_d = datetime.date(current_year, 1, 1), today
+
+    st.caption(f"Active: {start_d} ~ {end_d}")
+    st.markdown("---")
+
+# ==========================================
+# 4. 核心逻辑处理 (Time-Aware Inventory)
+# ==========================================
+try:
+    # A. 获取基础 P&L 数据 (Logic.py 处理全量数据)
+    df_pnl, df_inv_original, df_bills_unmatched, metrics_all = process_financials(df_std, df_s, df_b)
+    
+    if isinstance(metrics_all, str):
+        st.info("👋 欢迎使用 LogicSync。暂无数据，请先录入订单。")
+        st.stop()
+
+    # B. 增强列名匹配 (加入带空格的候选)
+    col_date_b = find_col(df_b, ['bill date', 'bill_date', 'date'])
+    if col_date_b: df_b[col_date_b] = pd.to_datetime(df_b[col_date_b])
+    
+    col_date_s = find_col(df_s, ['order date', 'order_date', 'date'])
+    if col_date_s: df_s[col_date_s] = pd.to_datetime(df_s[col_date_s])
+
+    # C. 库存快照计算 (基于 end_d)
+    cutoff_date = pd.Timestamp(end_d) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
+    # 1. 过滤数据用于库存计算
+    df_b_snapshot = df_b[df_b[col_date_b] <= cutoff_date].copy() if col_date_b else df_b.copy()
+    df_s_snapshot = df_s[df_s[col_date_s] <= cutoff_date].copy() if col_date_s else df_s.copy()
+
+    # 2. 识别列名
+    item_candidates = ['item_name', 'item name', 'item', 'product_name', 'product', 'description']
+    col_item_b = find_col(df_b, item_candidates)
+    col_item_s = find_col(df_s, item_candidates)
+    col_qty_b = find_col(df_b, ['quantity', 'qty', 'units'])
+    col_amt_b = find_col(df_b, ['amount_nzd', 'amount', 'total'])
+    col_qty_s = find_col(df_s, ['quantity', 'qty', 'units'])
+    col_port_b = find_col(df_b, ['port_of_loading', 'port', 'pol'])
+    col_port_s = find_col(df_s, ['port_of_loading', 'port', 'pol'])
+    col_item_std = find_col(df_std, item_candidates)
+
+    df_live_inv = pd.DataFrame()
+    total_inventory_value = 0
+    
+    if not df_b.empty and not df_s.empty and col_item_b and col_qty_b and col_amt_b and col_item_s and col_qty_s:
+        # 确定有效 Item 列表
+        if not df_std.empty and col_item_std:
+            valid_items = df_std[col_item_std].unique()
+        else:
+            valid_items = df_b[col_item_b].unique()
+            
+        # 3. 计算入库 (Filtered)
+        df_b_clean = df_b_snapshot[df_b_snapshot[col_item_b].isin(valid_items)].copy()
+        df_b_clean['Port_Std'] = df_b_clean[col_port_b].fillna('Unknown').astype(str).str.strip() if col_port_b else 'Unknown'
+        df_b_clean = df_b_clean.rename(columns={col_item_b: 'Item', col_qty_b: 'Qty', col_amt_b: 'Amt'})
+        grp_in = df_b_clean.groupby(['Item', 'Port_Std'])[['Qty', 'Amt']].sum()
+        
+        # 4. 计算出库 (Filtered)
+        df_s_clean = df_s_snapshot[df_s_snapshot[col_item_s].isin(valid_items)].copy()
+        df_s_clean['Port_Std'] = df_s_clean[col_port_s].fillna('Unknown').astype(str).str.strip() if col_port_s else 'Unknown'
+        df_s_clean = df_s_clean.rename(columns={col_item_s: 'Item', col_qty_s: 'Qty'})
+        grp_out = df_s_clean.groupby(['Item', 'Port_Std'])['Qty'].sum()
+        
+        # 5. 合并计算库存
+        df_calc = grp_in.join(grp_out, rsuffix='_out', how='left').fillna(0)
+        df_calc['Qty_out'] = df_calc['Qty_out'] if 'Qty_out' in df_calc.columns else 0
+        df_calc['On_Hand'] = df_calc['Qty'] - df_calc['Qty_out']
+        
+        # 加权平均成本
+        df_calc['Avg_Cost'] = df_calc.apply(lambda x: x['Amt'] / x['Qty'] if x['Qty'] > 0 else 0, axis=1)
+        df_calc['Total_Value'] = df_calc['On_Hand'] * df_calc['Avg_Cost']
+        
+        df_live_inv = df_calc.reset_index()
+        df_live_inv = df_live_inv[['Item', 'Port_Std', 'On_Hand', 'Avg_Cost', 'Total_Value']]
+        df_live_inv.columns = ['Item Name', 'Port of Loading', 'On Hand (CBM)', 'Avg Cost (NZD)', 'Total Value (NZD)']
+        
+        # 过滤微小误差
+        df_live_inv = df_live_inv[abs(df_live_inv['On Hand (CBM)']) > 0.001]
+        
+        total_inventory_value = df_live_inv['Total Value (NZD)'].sum()
+
+    # D. 智能匹配系统
+    col_inv_pnl = find_col(df_pnl, ['invoice_no', 'invoice'])
+    col_inv_s = find_col(df_s, ['invoice_no', 'invoice'])
+    
+    if col_inv_pnl and col_inv_s and col_port_s:
+        temp = df_s.copy()
+        temp['k'] = temp[col_inv_s].astype(str).str.strip().str.upper()
+        pmap = temp.set_index('k')[col_port_s].to_dict()
+        keys = df_pnl[col_inv_pnl].astype(str).str.strip().str.upper()
+        df_pnl['Port'] = keys.map(pmap).fillna('Unknown')
     else:
-        st.info("⚠️ API Inactive (Token 失效 - 将尝试自动刷新)")
-        
-    st.divider()
+        df_pnl['Port'] = 'Unknown'
+
+except Exception as e:
+    st.error(f"数据处理错误: {e}")
+    st.stop()
+
+# ==========================================
+# 5. 更多筛选 & KPI 计算
+# ==========================================
+with st.sidebar:
+    st.subheader("🔎 Filters")
+    status_opts = df_pnl['Status'].unique() if 'Status' in df_pnl.columns else []
+    selected_status = st.multiselect("Status", options=status_opts, default=status_opts)
     
-    # 1. 产品分类
-    selected_category = st.selectbox(
-        "Product Category (产品分类)", 
-        list(config.HS_CODES_MAP.keys())
-    )
-    target_hs_codes = config.HS_CODES_MAP[selected_category]
+    pnl_ports = df_pnl['Port'].unique() if 'Port' in df_pnl.columns else []
+    inv_ports = df_live_inv['Port of Loading'].unique() if not df_live_inv.empty else []
+    all_ports = list(set([str(p) for p in list(pnl_ports) + list(inv_ports) if str(p).lower() != 'nan']))
+    selected_ports = st.multiselect("Ports", options=all_ports, default=all_ports)
+
+# --- KPI 计算 ---
+df_pnl['Date'] = pd.to_datetime(df_pnl['Date'], errors='coerce')
+if col_date_b:
+    df_b[col_date_b] = pd.to_datetime(df_b[col_date_b], errors='coerce')
+
+# 收入/支出：计算周期内的发生额
+mask_rev = (df_pnl['Date'].dt.date >= start_d) & (df_pnl['Date'].dt.date <= end_d)
+kpi_revenue = df_pnl[mask_rev]['Revenue_NZD'].sum()
+
+if col_date_b:
+    mask_exp = (df_b[col_date_b].dt.date >= start_d) & (df_b[col_date_b].dt.date <= end_d)
+    kpi_expense = df_b[mask_exp]['Amount_NZD'].sum()
+else:
+    kpi_expense = 0
+
+kpi_inventory = total_inventory_value 
+kpi_profit = kpi_revenue - kpi_expense + kpi_inventory
+
+filtered_df = df_pnl[
+    (df_pnl['Status'].isin(selected_status)) & 
+    (df_pnl['Port'].isin(selected_ports)) 
+]
+
+if not df_live_inv.empty:
+    filtered_inv = df_live_inv[df_live_inv['Port of Loading'].isin(selected_ports)]
+else:
+    filtered_inv = pd.DataFrame()
+
+# ==========================================
+# 6. KPI 卡片展示
+# ==========================================
+c1, c2, c3, c4 = st.columns(4)
+kpi_card(c1, "Total Revenue", f"${kpi_revenue:,.0f}")
+kpi_card(c2, "Total Expenses", f"${kpi_expense:,.0f}", delta_color="inverse")
+kpi_card(c3, "Inventory Asset", f"${kpi_inventory:,.0f}", delta=f"As of {end_d}")
+kpi_card(c4, "Net Profit", f"${kpi_profit:,.0f}", delta="Realized + Asset", delta_color="normal")
+
+st.markdown(" ") 
+
+# ==========================================
+# 7. 主要内容 Tabs
+# ==========================================
+tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Orders Detail", "Inventory", "Bills"])
+
+with tab1:
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        if not filtered_df.empty:
+            col_gp = find_col(filtered_df, ['gross_profit', 'gp', 'profit'])
+            col_inv_plot = find_col(filtered_df, ['invoice_no', 'invoice'])
+            if col_gp and col_inv_plot:
+                fig1 = px.bar(
+                    filtered_df, x=col_inv_plot, y=col_gp, color='Status', 
+                    title="Profit per Shipment (NZD)",
+                    color_discrete_map={'Finalized': '#333333', 'Partial': '#FCD535', 'Provisional': '#E0E0E0'}
+                )
+                fig1.update_layout(plot_bgcolor='white', paper_bgcolor='white', font={'family': 'Inter'})
+                st.plotly_chart(fig1, use_container_width=True)
+            
+    with cc2:
+        if not filtered_df.empty:
+            col_rev = find_col(filtered_df, ['revenue_nzd', 'revenue', 'rev'])
+            col_month = find_col(filtered_df, ['month'])
+            col_gp = find_col(filtered_df, ['gross_profit', 'gp', 'profit'])
+
+            if col_month and col_rev and col_gp:
+                monthly = filtered_df.groupby(col_month)[[col_rev, col_gp]].sum().reset_index().sort_values(col_month)
+                fig2 = px.bar(
+                    monthly, x=col_month, y=[col_rev, col_gp], barmode='group', 
+                    title="Monthly Performance",
+                    color_discrete_sequence=['#E0E0E0', '#FCD535'] 
+                )
+                fig2.update_layout(plot_bgcolor='white', paper_bgcolor='white', font={'family': 'Inter'})
+                st.plotly_chart(fig2, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🚢 Port Profitability (Monthly Breakdown)")
     
-    st.divider()
-
-    # =========================================================
-    # 2. 日期范围逻辑 (Date Range Logic)
-    # =========================================================
-    st.markdown("📅 **Time Period**")
-
-    # --- 核心日期计算逻辑 ---
-    def set_date_range(range_type):
-        today = datetime.now().date()
-        first_of_this_month = today.replace(day=1)
+    if not filtered_df.empty and 'Port' in filtered_df.columns:
+        col_gp = find_col(filtered_df, ['gross_profit', 'gp', 'profit'])
+        col_month = find_col(filtered_df, ['month'])
         
-        if range_type == 'last_month':
-            # 逻辑：本月1号 - 1天 = 上月最后一天
-            end_date = first_of_this_month - timedelta(days=1)
-            start_date = end_date.replace(day=1)
-            st.session_state['global_date_range'] = (start_date, end_date)
-            
-        elif range_type == 'last_quarter':
-            # 逻辑：推算上个季度
-            current_month = today.month
-            curr_q_start_month = 3 * ((current_month - 1) // 3) + 1
-            curr_q_start_date = date(today.year, curr_q_start_month, 1)
-            
-            end_date = curr_q_start_date - timedelta(days=1)
-            start_date = date(end_date.year, end_date.month - 2, 1)
-            st.session_state['global_date_range'] = (start_date, end_date)
-            
-        elif range_type == 'last_year':
-            # 逻辑：去年的1月1日 到 12月31日
-            last_year_val = today.year - 1
-            st.session_state['global_date_range'] = (date(last_year_val, 1, 1), date(last_year_val, 12, 31))
-            
-        elif range_type == 'last_6_months':
-            # 逻辑：过去6个完整月 (Previous 6 full calendar months)
-            # 结束日期：上个月的最后一天
-            end_date = first_of_this_month - timedelta(days=1)
-            
-            # 开始日期：从本月1号往前推6个月
-            start_month = first_of_this_month.month - 6
-            start_year = first_of_this_month.year
-            if start_month <= 0:
-                start_month += 12
-                start_year -= 1
-            start_date = date(start_year, start_month, 1)
-            st.session_state['global_date_range'] = (start_date, end_date)
+        if col_gp and col_month:
+            port_profit = filtered_df.groupby([col_month, 'Port'])[col_gp].sum().reset_index().sort_values([col_month, 'Port'])
+            color_map = {'Wellington': '#333333', 'Lyttelton': '#FCD535', 'Tauranga': '#555555', 'Napier': '#777777', 'Unknown': '#E0E0E0'}
+            fig3 = px.bar(
+                port_profit, x=col_month, y=col_gp, color='Port', barmode='group',
+                title="Gross Profit by Port", text_auto='.2s', color_discrete_map=color_map 
+            )
+            fig3.update_layout(plot_bgcolor='white', paper_bgcolor='white', font={'family': 'Inter'}, xaxis_title=None)
+            st.plotly_chart(fig3, use_container_width=True)
+    else:
+        st.info("No port data available.")
 
-    # --- 快捷按钮布局 (2行2列) ---
-    # Row 1
-    c_d1, c_d2 = st.columns(2)
-    with c_d1: 
-        st.button(
-            "Last Month", 
-            help="Previous full calendar month", 
-            on_click=set_date_range, args=('last_month',), 
-            use_container_width=True
-        )
-    with c_d2: 
-        st.button(
-            "Last Quarter", 
-            help="Previous full calendar quarter", 
-            on_click=set_date_range, args=('last_quarter',), 
-            use_container_width=True
-        )
-        
-    # Row 2
-    c_d3, c_d4 = st.columns(2)
-    with c_d3: 
-        st.button(
-            "Last 6 Months", 
-            help="Previous 6 full calendar months", 
-            on_click=set_date_range, args=('last_6_months',), 
-            use_container_width=True
-        )
-    with c_d4: 
-        st.button(
-            "Last Year", 
-            help="Previous full calendar year", 
-            on_click=set_date_range, args=('last_year',), 
-            use_container_width=True
-        )
+with tab2:
+    st.subheader("Shipment P&L Detail")
+    if not filtered_df.empty:
+        df_display = filtered_df.copy()
+        cols_to_drop = [c for c in df_display.columns if c.lower() in ['id', 'created_at']]
+        df_display = df_display.drop(columns=cols_to_drop)
+        st.dataframe(df_display, use_container_width=True)
+    else:
+        st.info("No data available.")
 
-    # --- 初始化默认值 ---
-    today = datetime.now().date()
-    if 'global_date_range' not in st.session_state:
-        # 默认初始化为: 上一个月
-        first_of_this_month = today.replace(day=1)
-        end_date = first_of_this_month - timedelta(days=1)
-        start_date = end_date.replace(day=1)
-        st.session_state['global_date_range'] = (start_date, end_date)
-
-    # --- 日期选择器 (纯英文) ---
-    date_range = st.date_input(
-        "Custom Range", 
-        max_value=today,
-        format="YYYY-MM-DD",
-        key="global_date_range" 
-    )
-
-# ==========================================
-# 主界面筛选 (Main Filters)
-# ==========================================
-st.markdown("### 🔍 Filters (筛选条件)")
-c1, c2 = st.columns(2)
-with c1: 
-    st.caption("Quick Select - Origin (快捷选择 - 出口国):")
-    utils.render_region_buttons("ana_origin", c1)
-    ana_origins = st.multiselect(
-        "Origin Country (出口国)", 
-        utils.get_all_country_codes(), 
-        format_func=utils.country_format_func, 
-        key="ana_origin"
-    )
-with c2: 
-    st.caption("Quick Select - Dest (快捷选择 - 进口国):")
-    utils.render_region_buttons("ana_dest", c2)
-    ana_dests = st.multiselect(
-        "Destination Country (进口国)", 
-        utils.get_all_country_codes(), 
-        format_func=utils.country_format_func, 
-        key="ana_dest"
-    )
-
-c3, c4 = st.columns(2)
-with c3:
-    ana_hs_selected = st.multiselect("HS Codes (Leave empty for All/留空全选)", target_hs_codes, key="ana_hs")
-    final_ana_hs_codes = ana_hs_selected if ana_hs_selected else target_hs_codes
-with c4:
-    species_options = list(config.SPECIES_KEYWORDS.keys()) + ["Other", "Unknown"]
-    ana_species_selected = st.multiselect("Species (树种) (Leave empty for All/留空全选)", species_options, key="ana_species")
-
-st.divider()
-
-# ==========================================
-# 数据提取逻辑 (Data Extraction Logic)
-# ==========================================
-start_d, end_d = None, None
-is_date_valid = False
-
-if isinstance(date_range, tuple):
-    if len(date_range) == 2:
-        start_d, end_d = date_range
-        is_date_valid = True
-    elif len(date_range) == 1:
-        st.warning("⚠️ Please select an End Date to proceed (请选择结束日期).")
-
-if is_date_valid and start_d and end_d:
-    st.info(f"📅 Current Analysis Period (当前分析范围): **{start_d}** to **{end_d}**")
-
-    # 点击按钮 -> 触发数据加载
-    if st.button("📊 Load Analysis Report (加载分析报告)", type="primary", use_container_width=True):
-        # --- 核心配置 ---
-        all_rows = []
-        batch_size = 5000       # 单次请求最大行数
-        chunk_days = 7          # 每次只取 7 天的数据
-        
-        # 增加 'port_of_departure' 字段
-        needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,port_of_departure,exporter_name,importer_name,unique_record_id"
-        
-        with st.status("🚀 Starting Data Extraction (正在启动分片提取)...", expanded=True) as status:
-            msg_placeholder = st.empty()
-            progress_bar = st.progress(0)
-            
+with tab3:
+    st.subheader(f"Live Inventory Snapshot (As of {end_d})")
+    
+    if not filtered_inv.empty:
+        # 1. 表格
+        def highlight_negative(val):
             try:
-                current_start_dt = datetime.combine(start_d, datetime.min.time())
-                end_dt = datetime.combine(end_d, datetime.min.time())
+                v = float(val.replace(',', '').replace('$', '')) if isinstance(val, str) else val
+                return 'background-color: #ffcccb; color: #8b0000; font-weight: bold;' if v < 0 else ''
+            except:
+                return ''
 
-                total_days = (end_dt - current_start_dt).days
-                if total_days <= 0: total_days = 1
-                
-                current_chunk_start = current_start_dt
-                
-                while current_chunk_start <= end_dt:
-                    current_chunk_end = min(current_chunk_start + timedelta(days=chunk_days), end_dt)
-                    
-                    days_done = (current_chunk_start - current_start_dt).days
-                    progress = min(days_done / total_days, 0.99)
-                    progress_bar.progress(progress)
-                    msg_placeholder.info(f"📅 Fetching: {current_chunk_start.date()} to {current_chunk_end.date()} ... (Records: {len(all_rows)})")
-                    
-                    chunk_offset = 0
-                    while True:
-                        query = utils.supabase.table('trade_records')\
-                            .select(needed_columns)\
-                            .gte('transaction_date', current_chunk_start.date())\
-                            .lte('transaction_date', current_chunk_end.date())
-                        
-                        if ana_origins: query = query.in_('origin_country_code', ana_origins)
-                        if ana_dests: query = query.in_('dest_country_code', ana_dests)
-                        
-                        response = query.range(chunk_offset, chunk_offset + batch_size - 1).execute()
-                        rows = response.data
-                        
-                        if not rows: break
-                        
-                        all_rows.extend(rows)
-                        chunk_offset += len(rows)
-                        if len(rows) < batch_size: break
-                    
-                    current_chunk_start = current_chunk_end + timedelta(days=1)
-                
-                progress_bar.progress(1.0)
-                msg_placeholder.empty()
-                status.update(label=f"✅ Extraction Complete: {len(all_rows)} records (提取完成)", state="complete")
-                
-                if all_rows:
-                    df = pd.DataFrame(all_rows)
-                    df = df.sort_values(by='transaction_date', ascending=False)
-                    st.session_state['analysis_df'] = df
-                    st.session_state['report_active'] = True
-                else:
-                    st.session_state['report_active'] = False
-                    st.warning("No data found for this period (该时间段无数据)")
-                    
-            except Exception as e: 
-                status.update(label="Extraction Error (提取出错)", state="error")
-                st.error(f"Error detail: {str(e)}")
-
-# ==========================================
-# 报告渲染逻辑 (Report Rendering)
-# ==========================================
-if st.session_state.get('report_active', False) and not st.session_state['analysis_df'].empty:
-    df = st.session_state['analysis_df']
-
-    # --- 🛠️ 关键修复：强制数值转换 (防止 TypeError) ---
-    df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0)
-    df['total_value_usd'] = pd.to_numeric(df['total_value_usd'], errors='coerce').fillna(0)
-    # ----------------------------------------------------
-
-    # --- 数据清洗 ---
-    df['port_of_arrival'] = df['port_of_arrival'].fillna('Unknown').astype(str).apply(
-        lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in x else x.strip()
-    )
-    if 'port_of_departure' in df.columns:
-        df['port_of_departure'] = df['port_of_departure'].fillna('Unknown').astype(str).apply(
-            lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in x else x.strip()
+        st.dataframe(
+            filtered_inv.style.format({
+                "On Hand (CBM)": "{:,.3f}", 
+                "Avg Cost (NZD)": "${:,.2f}", 
+                "Total Value (NZD)": "${:,.2f}"
+            }).applymap(highlight_negative, subset=['On Hand (CBM)', 'Total Value (NZD)']), 
+            use_container_width=True
         )
-    else:
-        df['port_of_departure'] = 'Unknown'
-
-    name_fix_map = {
-        "VIZAG": "Visakhapatnam", "VIZAG SEA": "Visakhapatnam",
-        "GOA": "Mormugao (Goa)", "GOA PORT": "Mormugao (Goa)"
-    }
-    df['port_of_arrival'] = df['port_of_arrival'].replace(name_fix_map)
-    if hasattr(config, 'PORT_CODE_TO_NAME'):
-        df['port_of_arrival'] = df['port_of_arrival'].replace(config.PORT_CODE_TO_NAME)
-    
-    # --- 基础筛选 ---
-    df['match_hs'] = df['hs_code'].astype(str).apply(lambda x: any(x.startswith(t) for t in final_ana_hs_codes))
-    df = df[df['match_hs']]
-    
-    if 'product_desc_text' in df.columns:
-        df['Species'] = df['product_desc_text'].apply(utils.identify_species)
-    else:
-        df['Species'] = 'Unknown'
-
-    current_category_type = None
-    if "Softwood" in selected_category: current_category_type = "Softwood"
-    elif "Hardwood" in selected_category: current_category_type = "Hardwood"
-    
-    if current_category_type:
-        forbidden_type = "Hardwood" if current_category_type == "Softwood" else "Softwood"
-        forbidden_species = getattr(config, 'SPECIES_CATEGORY_MAP', {}).get(forbidden_type, [])
-        if forbidden_species:
-            df = df[~df['Species'].isin(forbidden_species)]
-    
-    if ana_species_selected: df = df[df['Species'].isin(ana_species_selected)]
-    if ana_origins: df = df[df['origin_country_code'].isin(ana_origins)]
-    if ana_dests: df = df[df['dest_country_code'].isin(ana_dests)]
-
-    if df.empty:
-        st.warning("No data after local filtering (本地筛选后无数据)")
-    else:
-        # 此时 quantity 和 total_value_usd 已经是数字，除法安全
-        df['unit_price'] = df.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 else 0, axis=1)
         
-        def get_country_name_en(code):
-            if pd.isna(code) or code == "" or code is None: return "Unknown"
-            full_name = config.COUNTRY_NAME_MAP.get(code, code)
-            full_name_str = str(full_name)
-            if '(' in full_name_str: return full_name_str.split(' (')[0]
-            return full_name_str
-
-        df['origin_name'] = df['origin_country_code'].apply(get_country_name_en)
-        df['dest_name'] = df['dest_country_code'].apply(get_country_name_en)
-        df['Month'] = pd.to_datetime(df['transaction_date']).dt.to_period('M').astype(str)
-        sorted_months = sorted(df['Month'].unique())
-
-        # ========================================================
-        # Global Unit Filter & Smart Price
-        # ========================================================
-        df['quantity_unit'] = df['quantity_unit'].fillna('Unknown')
-        vol_units = df['quantity_unit'].unique().tolist()
+        st.markdown("---")
         
-        default_unit_idx = 0
-        for i, u in enumerate(vol_units):
-            if str(u).upper() in ['MTQ', 'CBM', 'M3', 'M3 ']:
-                default_unit_idx = i
-                break
-        
-        c_unit_sel, _ = st.columns([1, 3])
-        with c_unit_sel:
-            target_unit = st.selectbox("🔢 Global Unit Filter (全局单位清洗):", vol_units, index=default_unit_idx)
-            
-        df_clean_qty = df[df['quantity_unit'] == target_unit].copy()
-        
-        with st.expander("🧹 Smart Outlier Filter (异常值智能清洗)", expanded=True):
-            c_cl1, c_cl2 = st.columns([3, 1])
-            with c_cl1: st.info("💡 Enable this to auto-remove records with extremely low unit price (KG mislabeled as M3).")
-            with c_cl2: enable_price_clean = st.checkbox("Enable (启用)", value=True)
-                
-            if enable_price_clean:
-                min_valid_price = st.number_input("Min Valid Price ($/Unit)", value=5.0, step=1.0)
-                # 修复点：这里的除法现在是安全的，因为之前做了 pd.to_numeric
-                df_clean_qty['calc_price'] = df_clean_qty.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 else 0, axis=1)
-                count_before = len(df_clean_qty)
-                df_clean_qty = df_clean_qty[df_clean_qty['calc_price'] >= min_valid_price]
-                if count_before > len(df_clean_qty):
-                    st.warning(f"🧹 Removed {count_before - len(df_clean_qty)} outlier records")
-
-        # --- KPI ---
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Record Count", len(df))
-        k2.metric(f"Total Volume ({target_unit})", f"{df_clean_qty['quantity'].sum():,.0f}")
-        k3.metric("Total Value (USD)", f"${df['total_value_usd'].sum():,.0f}")
-        
-        st.divider()
-
-        # ============================================
-        # 1. 数量趋势 (Volume Trends)
-        # ============================================
-        st.subheader("📈 Volume Trends (数量趋势)")
-        if not df_clean_qty.empty:
-            r1_c1, r1_c2 = st.columns(2)
-            with r1_c1:
-                chart_species = df_clean_qty.groupby(['Month', 'Species'])['quantity'].sum().reset_index()
-                st.plotly_chart(px.bar(chart_species, x="Month", y="quantity", color="Species", title=f"Monthly Volume by Species ({target_unit})", category_orders={"Month": sorted_months}), use_container_width=True)
-            with r1_c2:
-                chart_origin = df_clean_qty.groupby(['Month', 'origin_name'])['quantity'].sum().reset_index()
-                st.plotly_chart(px.bar(chart_origin, x="Month", y="quantity", color="origin_name", title=f"Monthly Volume by Origin ({target_unit})", category_orders={"Month": sorted_months}), use_container_width=True)
-        else:
-            st.warning(f"No valid data for unit: {target_unit}")
-        st.divider()
-        
-        # ============================================
-        # 2. 金额趋势 (Value Trends)
-        # ============================================
-        st.subheader("💰 Value Trends & Structure (金额趋势与结构)")
-        r2_c1, r2_c2 = st.columns(2)
-        with r2_c1:
-            chart_val_origin = df.groupby(['Month', 'origin_name'])['total_value_usd'].sum().reset_index()
-            st.plotly_chart(px.bar(chart_val_origin, x="Month", y="total_value_usd", color="origin_name", title="Monthly Value by Origin (USD)", category_orders={"Month": sorted_months}), use_container_width=True)
-        with r2_c2:
-            g_col = 'dest_name' if ana_origins and not ana_dests else 'origin_name'
-            label_suffix = "Dest" if ana_origins and not ana_dests else "Origin"
-            st.plotly_chart(px.pie(df, names=g_col, values='total_value_usd', hole=0.4, title=f"Value Share by {label_suffix} (USD)"), use_container_width=True)
-        st.divider()
-
-        # ============================================
-        # 3. 价格分析 (Price Analysis) - [修改: 分行显示]
-        # ============================================
-        st.subheader("🏷️ Price Analysis (价格分析)")
-        if not df_clean_qty.empty:
-            # Chart 1: Price by Origin
-            price_org = df_clean_qty.groupby('origin_name').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
-            st.plotly_chart(px.bar(price_org, x="origin_name", y="avg_price", title=f"Avg Price by Origin (USD/{target_unit})", color="avg_price", color_continuous_scale="Blues", text_auto='.0f'), use_container_width=True)
-            
-            # Chart 2: Price by Species
-            price_sp = df_clean_qty.groupby('Species').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
-            st.plotly_chart(px.bar(price_sp, x="Species", y="avg_price", title=f"Avg Price by Species (USD/{target_unit})", color="avg_price", color_continuous_scale="Greens", text_auto='.0f'), use_container_width=True)
-            
-            # --- 🔥 [修改] Monthly Price & Volume Trend (Split into two distinct Bar Charts) ---
-            st.markdown("##### 📉 Monthly Volume & Price Trends (月度量价走势 - 拆分)")
-            
-            # 1. 准备聚合数据
-            trend_df = df_clean_qty.groupby(['Month', 'Species'])[['quantity', 'total_value_usd']].sum().reset_index()
-            trend_df['avg_price'] = trend_df.apply(lambda x: x['total_value_usd']/x['quantity'] if x['quantity']>0 else 0, axis=1)
-            
-            # 2. Chart A: Monthly Volume Trend (Bar) - Row 1
-            st.markdown("**1. Monthly Volume Trend (月度数量趋势)**")
-            fig_vol = px.bar(
-                trend_df, 
-                x="Month", 
-                y="quantity", 
-                color="Species",
-                title=f"Monthly Volume ({target_unit})",
-                category_orders={"Month": sorted_months},
-                barmode='stack' # 堆叠显示总量
-            )
-            st.plotly_chart(fig_vol, use_container_width=True)
-            
-            # 3. Chart B: Monthly Price Trend (Bar) - Row 2
-            # 注意：单价不应该堆叠（叠加单价没有意义），所以这里使用 barmode='group' 分组显示
-            st.markdown("**2. Monthly Unit Price Trend (月度单价趋势)**")
-            fig_price = px.bar(
-                trend_df, 
-                x="Month", 
-                y="avg_price", 
-                color="Species",
-                title="Monthly Avg Unit Price (USD)",
-                category_orders={"Month": sorted_months},
-                barmode='group', # 分组显示，方便对比不同树种的价格
-                text_auto='.0f'
-            )
-            # 优化 Price Chart 的显示，避免柱子太细
-            fig_price.update_layout(bargap=0.15, bargroupgap=0.1)
-            
-            st.plotly_chart(fig_price, use_container_width=True)
-
-        else:
-            st.warning("No data for Price Analysis.")
-        st.divider()
-
-        # ============================================
-        # 4. 贸易商排名 (Top Traders)
-        # ============================================
-        st.subheader("🏆 Top Traders (贸易商排名 - by USD)")
-        df['importer_name'] = df['importer_name'].fillna('Unknown').replace('', 'Unknown')
-        df['exporter_name'] = df['exporter_name'].fillna('Unknown').replace('', 'Unknown')
-        
-        tc1, tc2 = st.columns(2)
-        with tc1:
-            top_exp = df.groupby('exporter_name')['total_value_usd'].sum().nlargest(10).sort_values().reset_index()
-            st.plotly_chart(px.bar(top_exp, y="exporter_name", x="total_value_usd", orientation='h', title="🔥 Top 10 Exporters", color="total_value_usd", color_continuous_scale="Oranges", text_auto='.2s'), use_container_width=True)
-        with tc2:
-            top_imp = df.groupby('importer_name')['total_value_usd'].sum().nlargest(10).sort_values().reset_index()
-            st.plotly_chart(px.bar(top_imp, y="importer_name", x="total_value_usd", orientation='h', title="🛒 Top 10 Buyers", color="total_value_usd", color_continuous_scale="Teal", text_auto='.2s'), use_container_width=True)
-        st.divider()
-
-        # ============================================
-        # 5. 港口分析 (Port Analysis)
-        # ============================================
-        st.subheader("⚓ Port Analysis (港口分析)")
-        
-        df['port_of_arrival'] = df['port_of_arrival'].fillna('Unknown').replace('', 'Unknown')
-        df['port_of_departure'] = df['port_of_departure'].fillna('Unknown').replace('', 'Unknown')
-
-        # --- Part A: Port of Loading (装货港) ---
-        st.markdown("##### 🛫 Top 10 Port of Loading (装货港/起运港)")
-        pl1, pl2 = st.columns(2)
-        with pl1:
-            top_val_dep = df.groupby('port_of_departure')['total_value_usd'].sum().nlargest(10).index.tolist()
-            chart_dep_val = df[df['port_of_departure'].isin(top_val_dep)].groupby(['port_of_departure', 'Species'])['total_value_usd'].sum().reset_index()
-            st.plotly_chart(px.bar(chart_dep_val, x="port_of_departure", y="total_value_usd", color="Species", title="Loading Port - by Value (USD)", category_orders={"port_of_departure": top_val_dep}), use_container_width=True)
-        with pl2:
-            if not df_clean_qty.empty:
-                top_qty_dep = df_clean_qty.groupby('port_of_departure')['quantity'].sum().nlargest(10).index.tolist()
-                chart_dep_qty = df_clean_qty[df_clean_qty['port_of_departure'].isin(top_qty_dep)].groupby(['port_of_departure', 'Species'])['quantity'].sum().reset_index()
-                st.plotly_chart(px.bar(chart_dep_qty, x="port_of_departure", y="quantity", color="Species", title=f"Loading Port - by Volume ({target_unit})", category_orders={"port_of_departure": top_qty_dep}), use_container_width=True)
-            else:
-                st.info("No volume data available for Loading Ports.")
+        # 2. 分港口/产品横向条形图
+        st.subheader("📊 Inventory Breakdown by Port")
+        fig_inv_bar = px.bar(
+            filtered_inv,
+            x='On Hand (CBM)',
+            y='Item Name',
+            color='Port of Loading',
+            orientation='h',  # 横向
+            barmode='group',  # 分组对比
+            text_auto='.1f',
+            title="Inventory Volume by Item & Port",
+            color_discrete_map={'Wellington': '#333333', 'Lyttelton': '#FCD535', 'Tauranga': '#555555', 'Napier': '#777777', 'Unknown': '#E0E0E0'}
+        )
+        fig_inv_bar.update_layout(plot_bgcolor='white', paper_bgcolor='white', font={'family': 'Inter'}, xaxis_title="Volume (CBM)", yaxis_title=None)
+        st.plotly_chart(fig_inv_bar, use_container_width=True)
 
         st.markdown("---")
-
-        # --- Part B: Port of Discharge (卸货港) ---
-        st.markdown("##### 🛬 Top 10 Port of Discharge (卸货港/目的港)")
-        t1, t2 = st.columns(2)
-        with t1:
-            top_val_arr = df.groupby('port_of_arrival')['total_value_usd'].sum().nlargest(10).index.tolist()
-            chart_arr_val = df[df['port_of_arrival'].isin(top_val_arr)].groupby(['port_of_arrival', 'Species'])['total_value_usd'].sum().reset_index()
-            st.plotly_chart(px.bar(chart_arr_val, x="port_of_arrival", y="total_value_usd", color="Species", title="Discharge Port - by Value (USD)", category_orders={"port_of_arrival": top_val_arr}), use_container_width=True)
-        with t2:
-            if not df_clean_qty.empty:
-                top_qty_arr = df_clean_qty.groupby('port_of_arrival')['quantity'].sum().nlargest(10).index.tolist()
-                chart_arr_qty = df_clean_qty[df_clean_qty['port_of_arrival'].isin(top_qty_arr)].groupby(['port_of_arrival', 'Species'])['quantity'].sum().reset_index()
-                st.plotly_chart(px.bar(chart_arr_qty, x="port_of_arrival", y="quantity", color="Species", title=f"Discharge Port - by Volume ({target_unit})", category_orders={"port_of_arrival": top_qty_arr}), use_container_width=True)
-            else:
-                st.info("No volume data available for Discharge Ports.")
-
-        st.divider()
-
-        # --- Map & Inspector ---
-        st.markdown("##### 🌏 Port Inspector & Map (港口透视)")
-        if not df_clean_qty.empty:
-            map_df = df_clean_qty.groupby('port_of_arrival')['quantity'].sum().reset_index()
-            val_df = df.groupby('port_of_arrival')['total_value_usd'].sum().reset_index()
-            map_df = map_df.merge(val_df, on='port_of_arrival', how='left')
-            
-            dom_sp = df_clean_qty.groupby(['port_of_arrival', 'Species'])['quantity'].sum().reset_index().sort_values('quantity', ascending=False).drop_duplicates('port_of_arrival')
-            map_df = map_df.merge(dom_sp[['port_of_arrival','Species']].rename(columns={'Species':'dominant_species'}), on='port_of_arrival', how='left')
-
-            def get_coords(port_name):
-                if not port_name: return None, None
-                p_upper = str(port_name).upper().strip()
-                if p_upper in config.PORT_COORDINATES: return config.PORT_COORDINATES[p_upper]['lat'], config.PORT_COORDINATES[p_upper]['lon']
-                for key in config.PORT_COORDINATES:
-                    if key in p_upper and len(key) > 3: return config.PORT_COORDINATES[key]['lat'], config.PORT_COORDINATES[key]['lon']
-                return None, None
-
-            map_df['lat'], map_df['lon'] = zip(*map_df['port_of_arrival'].map(get_coords))
-            plot_map_df = map_df.dropna(subset=['lat', 'lon'])
-
-            cm1, cm2 = st.columns([2, 1])
-            with cm1:
-                if not plot_map_df.empty:
-                    fig_map = px.scatter_geo(plot_map_df, lat='lat', lon='lon', size='quantity', color='dominant_species', hover_name='port_of_arrival', projection="natural earth", size_max=40, title=f"Global Arrival Port Distribution ({target_unit})")
-                    fig_map.update_geos(showcountries=True, countrycolor="#e5e5e5", showcoastlines=True)
-                    fig_map.update_layout(height=500, margin={"r":0,"t":30,"l":0,"b":0}, legend=dict(orientation="h", y=-0.1))
-                    st.plotly_chart(fig_map, use_container_width=True)
-                else:
-                    st.warning("No coordinate data available for map.")
-            with cm2:
-                st.markdown("##### 🔬 Detail (详情)")
-                if not map_df.empty:
-                    sel_port = st.selectbox("Select Port", map_df.sort_values('quantity', ascending=False)['port_of_arrival'].tolist(), key="port_inspector")
-                    p_qty = map_df[map_df['port_of_arrival']==sel_port]['quantity'].values[0]
-                    p_val = map_df[map_df['port_of_arrival']==sel_port]['total_value_usd'].values[0]
-                    st.metric(f"Vol ({target_unit})", f"{p_qty:,.0f}")
-                    st.metric("Val (USD)", f"${p_val:,.0f}")
-                    
-                    port_sp_pie = df_clean_qty[df_clean_qty['port_of_arrival']==sel_port].groupby('Species')['quantity'].sum().reset_index()
-                    fig_pie = px.pie(port_sp_pie, names='Species', values='quantity', hole=0.3)
-                    fig_pie.update_layout(height=250, margin={"r":0,"t":0,"l":0,"b":0}, showlegend=False)
-                    st.plotly_chart(fig_pie, use_container_width=True)
-
-        st.divider()
         
-        # 详情表
-        st.subheader("📋 Detailed Records (详细数据)")
-        cols = ['transaction_date', 'hs_code', 'Species', 'origin_name', 'dest_name', 'port_of_departure', 'port_of_arrival', 'quantity', 'quantity_unit', 'total_value_usd', 'unit_price', 'exporter_name', 'importer_name']
-        final_cols = [c for c in cols if c in df.columns]
-        st.dataframe(df[final_cols], use_container_width=True)
+        # 3. 库存趋势图 (增强健壮性)
+        st.subheader("📈 Inventory Trend (Timeline)")
+        try:
+            # 安全构造数据
+            df_trend_list = []
+            
+            # 构造入库流 (Purchase)
+            if col_date_b and col_qty_b:
+                in_flow = df_b[[col_date_b, col_qty_b]].copy()
+                in_flow.columns = ['Date', 'Change']
+                in_flow['Type'] = 'Purchase'
+                df_trend_list.append(in_flow)
+            
+            # 构造出库流 (Sale)
+            if col_date_s and col_qty_s:
+                out_flow = df_s[[col_date_s, col_qty_s]].copy()
+                out_flow.columns = ['Date', 'Change']
+                out_flow['Change'] = -out_flow['Change'] # 变负数
+                out_flow['Type'] = 'Sale'
+                df_trend_list.append(out_flow)
+            
+            if df_trend_list:
+                # 合并并计算累计
+                df_trend = pd.concat(df_trend_list, ignore_index=True)
+                df_trend['Date'] = pd.to_datetime(df_trend['Date']) # 再次确保是日期格式
+                df_trend = df_trend.sort_values('Date')
+                
+                df_trend['Inventory Level'] = df_trend['Change'].cumsum()
+                
+                # 绘图 (只显示选定周期内的变化)
+                df_trend_viz = df_trend[(df_trend['Date'].dt.date >= start_d) & (df_trend['Date'].dt.date <= end_d)]
+                
+                if not df_trend_viz.empty:
+                    fig_trend = px.line(
+                        df_trend_viz, x='Date', y='Inventory Level', 
+                        title="Total Inventory Volume Over Time (CBM)", markers=True
+                    )
+                    fig_trend.update_layout(plot_bgcolor='white', paper_bgcolor='white', font={'family': 'Inter'})
+                    st.plotly_chart(fig_trend, use_container_width=True)
+                else:
+                    st.info("No movements in selected period.")
+            else:
+                st.warning("Not enough data to generate trend chart.")
 
-elif start_d and end_d:
-    st.info("👈 Please click 'Load Analysis Report' button to start.")
-else:
-    st.info("Please select a date range.")
+        except Exception as e:
+            st.warning(f"Trend chart unavailable: {e}")
+            
+    else:
+        st.info("No inventory on hand.")
+
+with tab4:
+    st.subheader("Unmatched Bills (Orphan)")
+    if not df_bills_unmatched.empty:
+        df_bills_display = df_bills_unmatched.copy()
+        cols_to_drop_b = [c for c in df_bills_display.columns if c.lower() in ['id', 'created_at']]
+        df_bills_display = df_bills_display.drop(columns=cols_to_drop_b)
+        st.dataframe(df_bills_display, use_container_width=True)
+    else:
+        st.success("🎉 All bills are matched with shipments!")
