@@ -165,34 +165,28 @@ with st.container():
 st.divider()
 
 # ------------------------------------------
-# Row 2: Price Trend (单价趋势) [已修复 🛠️]
+# Row 2: Price Trend (单价趋势) [修改为柱状图 📊]
 # ------------------------------------------
 st.subheader("2. 💰 Price Trends (单价走势)")
 st.caption(f"Calculated as: Total Value / Total Quantity (Unit: USD / {target_unit})")
 
 with st.container():
-    # 数据聚合：先按月和树种汇总金额和数量，再算单价，避免平均值陷阱
+    # 数据聚合
     price_agg = df.groupby(['Month', 'Species'])[['total_value_usd', 'quantity']].sum().reset_index()
-    # 计算单价，处理除以0的情况
     price_agg['avg_price'] = price_agg.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 else 0, axis=1)
     
     price_series = []
     for sp in species_list:
-        # 重建索引，补全缺失月份
         sp_df = price_agg[price_agg['Species'] == sp].set_index('Month').reindex(months)
-        
-        # [🛠️ 修复点] 之前这里导致了 ValueError。
-        # 现在的做法：直接检查 avg_price 列的空值，如果是空值(NaN)，就填 None (让图表断开)
         sp_price_data = [x if pd.notnull(x) else None for x in sp_df['avg_price']]
         
         price_series.append({
             "name": sp,
-            "type": "line",
-            "smooth": True, # 平滑曲线
-            "showSymbol": False,
+            "type": "bar",   # <--- 改为 bar
+            # "stack": "total", # 注意：单价不建议堆叠，所以注释掉这一行，让它们并排显示
             "emphasis": {"focus": "series"},
             "data": sp_price_data,
-            "markPoint": { # 标注最大最小值
+            "markPoint": {
                 "data": [
                     {"type": "max", "name": "Max"},
                     {"type": "min", "name": "Min"}
@@ -204,10 +198,15 @@ with st.container():
         "tooltip": {"trigger": "axis", "valueFormatter": "(value) => '$' + Number(value).toFixed(1)"},
         "legend": {"data": species_list, "top": "bottom", "type": "scroll"},
         "grid": {"left": "3%", "right": "4%", "bottom": "15%", "containLabel": True},
-        "toolbox": {"feature": {"saveAsImage": {}}},
+        "toolbox": {
+            "feature": {
+                "magicType": {"type": ["line", "bar"]}, # 允许用户切回折线图
+                "saveAsImage": {}
+            }
+        },
         "dataZoom": [{"type": "slider", "xAxisIndex": 0, "start": 0, "end": 100}, {"type": "inside"}],
-        "xAxis": {"type": "category", "data": months, "boundaryGap": False},
-        "yAxis": {"type": "value", "name": "USD/Unit", "scale": True}, # scale=True 让Y轴不强制从0开始，更能看清波动
+        "xAxis": {"type": "category", "data": months},
+        "yAxis": {"type": "value", "name": "USD/Unit", "scale": True},
         "series": price_series
     }
     st_echarts(options=option_price, height="400px", key="echart_price")
@@ -225,7 +224,7 @@ sankey_df['origin_name'] = sankey_df['origin_name'].fillna("Unknown").astype(str
 sankey_df['dest_name'] = sankey_df['dest_name'].fillna("Unknown").astype(str)
 sankey_df['Species'] = sankey_df['Species'].fillna("Unknown").astype(str)
 
-# 动态 Top N (防止节点太多)
+# 动态 Top N
 if len(sankey_df) > 500:
     top_n = 20
     top_origins = sankey_df.groupby('origin_name')['quantity'].sum().nlargest(top_n).index
