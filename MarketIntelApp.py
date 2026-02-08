@@ -389,6 +389,8 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             species_list = sorted(trend_df['Species'].unique())
             colors = px.colors.qualitative.Plotly # 使用 Plotly 默认色盘
             
+            # ... (前文代码不变) ...
+
             # 3. 创建双轴图
             fig_combo = make_subplots(specs=[[{"secondary_y": True}]])
             
@@ -411,18 +413,25 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 )
                 
                 # Line: Price (右轴) - 实线
+                # --- 🔥 修改开始: 增加价格 Data Label ---
                 fig_combo.add_trace(
                     go.Scatter(
                         x=sp_data['Month'], 
                         y=sp_data['avg_price'], 
                         name=f"{sp} (Price)",
-                        mode='lines+markers',
+                        mode='lines+markers+text', # 修改模式: 增加 text
+                        text=sp_data['avg_price'].apply(lambda x: f"{x:.0f}"), # 设置标签文本 (保留整数)
+                        textposition="top center", # 标签位置: 点的上方
                         line=dict(color=color_val, width=2),
                         marker=dict(size=6),
                         legendgroup=sp
                     ),
                     secondary_y=True
                 )
+                # --- 🔥 修改结束 ---
+
+            # 4. 布局调整
+            # ... (后文代码不变) ...
 
             # 4. 布局调整
             fig_combo.update_layout(
