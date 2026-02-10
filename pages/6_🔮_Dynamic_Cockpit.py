@@ -39,31 +39,25 @@ if 'analysis_df' not in st.session_state or st.session_state['analysis_df'].empt
 df_raw = st.session_state['analysis_df'].copy()
 
 # ==========================================
-# 3. 核心数据清洗 (逻辑同步自 MarketIntelApp.py) 🛠️
+# 3. 核心数据清洗 (Data Cleaning)
 # ==========================================
 
-# 3.1 强制数值转换 (防止 TypeError)
+# 3.1 强制数值转换
 df_raw['quantity'] = pd.to_numeric(df_raw['quantity'], errors='coerce').fillna(0)
 df_raw['total_value_usd'] = pd.to_numeric(df_raw['total_value_usd'], errors='coerce').fillna(0)
 
-# 3.2 港口清洗 (Port Cleaning)
-# 去除括号内容 (e.g., "Mormugao (Goa)" -> "Mormugao")，标准化名称
+# 3.2 港口清洗
 def clean_port_name(val):
     s = str(val).strip()
-    if '(' in s:
-        return s.split('(')[-1].replace(')', '').strip()
+    if '(' in s: return s.split('(')[-1].replace(')', '').strip()
     return s
 
-# 清洗 arrival
 df_raw['port_of_arrival'] = df_raw['port_of_arrival'].fillna('Unknown').apply(clean_port_name)
-
-# 清洗 departure (如果存在)
 if 'port_of_departure' in df_raw.columns:
     df_raw['port_of_departure'] = df_raw['port_of_departure'].fillna('Unknown').apply(clean_port_name)
 else:
     df_raw['port_of_departure'] = 'Unknown'
 
-# 应用名称映射 (Name Mapping)
 name_fix_map = {
     "VIZAG": "Visakhapatnam", "VIZAG SEA": "Visakhapatnam",
     "GOA": "Mormugao (Goa)", "GOA PORT": "Mormugao (Goa)"
@@ -72,18 +66,18 @@ df_raw['port_of_arrival'] = df_raw['port_of_arrival'].replace(name_fix_map)
 if hasattr(config, 'PORT_CODE_TO_NAME'):
     df_raw['port_of_arrival'] = df_raw['port_of_arrival'].replace(config.PORT_CODE_TO_NAME)
 
-# 3.3 日期与月份处理
+# 3.3 日期处理
 df_raw['transaction_date'] = pd.to_datetime(df_raw['transaction_date'])
 df_raw['Month'] = df_raw['transaction_date'].dt.to_period('M').astype(str)
 
-# 3.4 树种识别 (Species ID)
+# 3.4 树种识别
 if 'Species' not in df_raw.columns:
     if 'product_desc_text' in df_raw.columns:
         df_raw['Species'] = df_raw['product_desc_text'].apply(utils.identify_species)
     else:
         df_raw['Species'] = 'Unknown'
 
-# 3.5 国家名称映射 (Country Names)
+# 3.5 国家名称映射
 def get_country_name_en(code):
     if pd.isna(code) or code == "" or code is None: return "Unknown"
     full_name = config.COUNTRY_NAME_MAP.get(code, code)
@@ -96,55 +90,62 @@ if 'origin_name' not in df_raw.columns:
 if 'dest_name' not in df_raw.columns:
     df_raw['dest_name'] = df_raw['dest_country_code'].apply(get_country_name_en)
 
+# --- [新增] 3.6 产品分类映射 (Product Category Mapping) ---
+def map_hs_to_category(hs_code):
+    hs_str = str(hs_code)
+    # 遍历 config 中的 HS_CODES_MAP 进行匹配
+    if hasattr(config, 'HS_CODES_MAP'):
+        for category, codes in config.HS_CODES_MAP.items():
+            for c in codes:
+                if hs_str.startswith(c):
+                    return category
+    return "Other Products"
+
+if 'Product_Category' not in df_raw.columns:
+    df_raw['Product_Category'] = df_raw['hs_code'].apply(map_hs_to_category)
+
 # ==========================================
 # 4. 侧边栏筛选器 (Sidebar Filters)
 # ==========================================
 with st.sidebar:
     st.header("🔍 Cockpit Filters")
 
-    # --- [Step 1] 全局单位清洗 (Global Unit Filter) ---
+    # --- [Step 1] 全局单位清洗 ---
     st.subheader("🛠️ Data Cleaning")
-    
-    # 获取单位列表
     df_raw['quantity_unit'] = df_raw['quantity_unit'].fillna('Unknown')
     available_units = df_raw['quantity_unit'].unique().tolist()
     
-    # 自动定位默认单位 (CBM/M3)
     default_ix = 0
     for i, u in enumerate(available_units):
         if str(u).upper() in ['CBM', 'M3', 'MTQ', 'M3 ']:
             default_ix = i
             break
             
-    target_unit = st.selectbox(
-        "📏 Global Unit (全局单位)", 
-        available_units, 
-        index=default_ix,
-        help="Only records matching this unit will be included."
-    )
+    target_unit = st.selectbox("📏 Global Unit (全局单位)", available_units, index=default_ix)
     
-    # --- [Step 2] 智能异常值清洗 (Smart Outlier Filter) ---
     with st.expander("🧹 Smart Outlier Filter", expanded=False):
-        st.info("Remove records with extremely low unit price (e.g. KG mislabeled as M3).")
         enable_price_clean = st.checkbox("Enable Filter", value=True)
         min_valid_price = st.number_input("Min Price ($/Unit)", value=5.0, step=1.0)
     
     st.divider()
 
-    # --- [Step 3] 常规业务筛选 ---
+    # --- [Step 2] 业务筛选 (新增 Product) ---
     # 日期
     min_date = df_raw['transaction_date'].min().date()
     max_date = df_raw['transaction_date'].max().date()
     date_range = st.date_input("📅 Date Range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
     
     # 动态获取选项
+    all_products = sorted(df_raw['Product_Category'].astype(str).unique())
     all_origins = sorted(df_raw['origin_name'].astype(str).unique())
-    sel_origins = st.multiselect("🛫 Origin (出口国)", all_origins, placeholder="All Origins")
-    
     all_species = sorted(df_raw['Species'].astype(str).unique())
-    sel_species = st.multiselect("🌲 Species (树种)", all_species, placeholder="All Species")
-    
     all_dests = sorted(df_raw['dest_name'].astype(str).unique())
+
+    # 📦 新增：产品分类筛选
+    sel_products = st.multiselect("📦 Product (产品分类)", all_products, placeholder="All Products")
+    
+    sel_origins = st.multiselect("🛫 Origin (出口国)", all_origins, placeholder="All Origins")
+    sel_species = st.multiselect("🌲 Species (树种)", all_species, placeholder="All Species")
     sel_dests = st.multiselect("🛬 Destination (进口国)", all_dests, placeholder="All Destinations")
 
 # ==========================================
@@ -154,26 +155,26 @@ with st.sidebar:
 # 1. 应用单位筛选
 df = df_raw[df_raw['quantity_unit'] == target_unit].copy()
 
-# 2. 应用异常值筛选 (Smart Price Filter)
+# 2. 应用异常值筛选
 if enable_price_clean:
-    # 计算单行单价 (用于过滤)
     df['calc_price'] = df.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 else 0, axis=1)
     df = df[df['calc_price'] >= min_valid_price]
 
-# 3. 应用业务筛选 (Date, Origin, Species, Dest)
+# 3. 应用业务筛选
 mask = pd.Series(True, index=df.index)
 
 if isinstance(date_range, tuple) and len(date_range) == 2:
     start_d, end_d = date_range
     mask &= (df['transaction_date'].dt.date >= start_d) & (df['transaction_date'].dt.date <= end_d)
 
+if sel_products: mask &= df['Product_Category'].isin(sel_products) # <--- 新增产品筛选逻辑
 if sel_origins: mask &= df['origin_name'].isin(sel_origins)
 if sel_species: mask &= df['Species'].isin(sel_species)
 if sel_dests: mask &= df['dest_name'].isin(sel_dests)
 
 df = df[mask].copy()
 
-# 侧边栏统计 (Stats)
+# 侧边栏统计
 with st.sidebar:
     st.divider()
     st.metric("Records Found", f"{len(df):,}")
@@ -186,7 +187,7 @@ with st.sidebar:
     st.metric(f"Avg Price (USD/{target_unit})", f"${avg_price_global:,.1f}")
 
 if df.empty:
-    st.error(f"❌ No data matches your filters (Unit: {target_unit}). Try changing the unit or date range.")
+    st.error(f"❌ No data matches your filters (Unit: {target_unit}). Try adjusting your filters.")
     st.stop()
 
 # ==========================================
@@ -230,7 +231,7 @@ with st.container():
 st.divider()
 
 # ------------------------------------------
-# Row 2: Price Trend (Bar Chart)
+# Row 2: Price Trend
 # ------------------------------------------
 st.subheader("2. 💰 Price Trends (单价走势)")
 st.caption(f"Calculated as: Total Value / Total Quantity (Unit: USD / {target_unit})")
@@ -365,7 +366,7 @@ with c_info:
     st.markdown("### 🔍 Inspector")
     st.markdown("**Current Filters:**")
     st.markdown(f"- **Unit:** {target_unit}")
+    if sel_products: st.markdown(f"- **Product:** {', '.join(sel_products)}")
+    else: st.markdown("- **Product:** All")
     if sel_origins: st.markdown(f"- **Origin:** {', '.join(sel_origins)}")
     else: st.markdown("- **Origin:** All")
-    if sel_species: st.markdown(f"- **Species:** {', '.join(sel_species)}")
-    else: st.markdown("- **Species:** All")
