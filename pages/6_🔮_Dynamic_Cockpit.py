@@ -90,10 +90,9 @@ if 'origin_name' not in df_raw.columns:
 if 'dest_name' not in df_raw.columns:
     df_raw['dest_name'] = df_raw['dest_country_code'].apply(get_country_name_en)
 
-# --- [新增] 3.6 产品分类映射 (Product Category Mapping) ---
+# 3.6 产品分类映射
 def map_hs_to_category(hs_code):
     hs_str = str(hs_code)
-    # 遍历 config 中的 HS_CODES_MAP 进行匹配
     if hasattr(config, 'HS_CODES_MAP'):
         for category, codes in config.HS_CODES_MAP.items():
             for c in codes:
@@ -129,7 +128,7 @@ with st.sidebar:
     
     st.divider()
 
-    # --- [Step 2] 业务筛选 (新增 Product) ---
+    # --- [Step 2] 业务筛选 ---
     # 日期
     min_date = df_raw['transaction_date'].min().date()
     max_date = df_raw['transaction_date'].max().date()
@@ -141,9 +140,8 @@ with st.sidebar:
     all_species = sorted(df_raw['Species'].astype(str).unique())
     all_dests = sorted(df_raw['dest_name'].astype(str).unique())
 
-    # 📦 新增：产品分类筛选
+    # 筛选器
     sel_products = st.multiselect("📦 Product (产品分类)", all_products, placeholder="All Products")
-    
     sel_origins = st.multiselect("🛫 Origin (出口国)", all_origins, placeholder="All Origins")
     sel_species = st.multiselect("🌲 Species (树种)", all_species, placeholder="All Species")
     sel_dests = st.multiselect("🛬 Destination (进口国)", all_dests, placeholder="All Destinations")
@@ -167,7 +165,7 @@ if isinstance(date_range, tuple) and len(date_range) == 2:
     start_d, end_d = date_range
     mask &= (df['transaction_date'].dt.date >= start_d) & (df['transaction_date'].dt.date <= end_d)
 
-if sel_products: mask &= df['Product_Category'].isin(sel_products) # <--- 新增产品筛选逻辑
+if sel_products: mask &= df['Product_Category'].isin(sel_products)
 if sel_origins: mask &= df['origin_name'].isin(sel_origins)
 if sel_species: mask &= df['Species'].isin(sel_species)
 if sel_dests: mask &= df['dest_name'].isin(sel_dests)
@@ -195,30 +193,49 @@ if df.empty:
 # ==========================================
 
 # ------------------------------------------
-# Row 1: Volume Trend
+# Row 1: Volume Trend (数量趋势) - [已升级 🆙]
 # ------------------------------------------
 st.subheader("1. 📈 Volume Trends (数量趋势)")
 
 with st.container():
-    vol_data = df.groupby(['Month', 'Species'])['quantity'].sum().reset_index()
+    # 🔘 维度切换按钮
+    c_view, _ = st.columns([2, 5])
+    with c_view:
+        view_dim = st.radio(
+            "Group By (分组依据):", 
+            ["Species (树种)", "Product (产品)", "Origin (出口国)"], 
+            horizontal=True,
+            key="vol_group"
+        )
+    
+    # 映射选择到列名
+    dim_map = {
+        "Species (树种)": "Species",
+        "Product (产品)": "Product_Category",
+        "Origin (出口国)": "origin_name"
+    }
+    target_col = dim_map[view_dim]
+
+    # 数据聚合
+    vol_data = df.groupby(['Month', target_col])['quantity'].sum().reset_index()
     months = sorted(vol_data['Month'].unique().tolist())
-    species_list = sorted(vol_data['Species'].unique().tolist())
+    group_list = sorted(vol_data[target_col].unique().tolist())
     
     vol_series = []
-    for sp in species_list:
-        sp_data = vol_data[vol_data['Species'] == sp].set_index('Month').reindex(months, fill_value=0)['quantity'].tolist()
+    for item in group_list:
+        item_data = vol_data[vol_data[target_col] == item].set_index('Month').reindex(months, fill_value=0)['quantity'].tolist()
         vol_series.append({
-            "name": sp,
+            "name": item,
             "type": "bar",
             "stack": "total",
             "emphasis": {"focus": "series"},
-            "data": sp_data,
+            "data": item_data,
             "animationDelay": 200
         })
 
     option_vol = {
         "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
-        "legend": {"data": species_list, "top": "bottom", "type": "scroll"},
+        "legend": {"data": group_list, "top": "bottom", "type": "scroll"},
         "grid": {"left": "3%", "right": "4%", "bottom": "15%", "containLabel": True},
         "toolbox": {"feature": {"magicType": {"type": ["line", "bar", "stack"]}, "saveAsImage": {}}},
         "dataZoom": [{"type": "slider", "xAxisIndex": 0, "start": 0, "end": 100}, {"type": "inside"}],
@@ -231,31 +248,45 @@ with st.container():
 st.divider()
 
 # ------------------------------------------
-# Row 2: Price Trend
+# Row 2: Price Trend (单价走势) - [已升级 🆙]
 # ------------------------------------------
 st.subheader("2. 💰 Price Trends (单价走势)")
 st.caption(f"Calculated as: Total Value / Total Quantity (Unit: USD / {target_unit})")
 
 with st.container():
-    price_agg = df.groupby(['Month', 'Species'])[['total_value_usd', 'quantity']].sum().reset_index()
+    # 🔘 维度切换按钮 (独立控制)
+    c_view_p, _ = st.columns([2, 5])
+    with c_view_p:
+        view_dim_p = st.radio(
+            "Group By (分组依据):", 
+            ["Species (树种)", "Product (产品)", "Origin (出口国)"], 
+            horizontal=True,
+            key="price_group"
+        )
+    target_col_p = dim_map[view_dim_p]
+
+    # 数据聚合
+    price_agg = df.groupby(['Month', target_col_p])[['total_value_usd', 'quantity']].sum().reset_index()
     price_agg['avg_price'] = price_agg.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 else 0, axis=1)
     
+    group_list_p = sorted(price_agg[target_col_p].unique().tolist())
     price_series = []
-    for sp in species_list:
-        sp_df = price_agg[price_agg['Species'] == sp].set_index('Month').reindex(months)
-        sp_price_data = [x if pd.notnull(x) else None for x in sp_df['avg_price']]
+    
+    for item in group_list_p:
+        item_df = price_agg[price_agg[target_col_p] == item].set_index('Month').reindex(months)
+        item_price_data = [x if pd.notnull(x) else None for x in item_df['avg_price']]
         
         price_series.append({
-            "name": sp,
+            "name": item,
             "type": "bar",
             "emphasis": {"focus": "series"},
-            "data": sp_price_data,
+            "data": item_price_data,
             "markPoint": {"data": [{"type": "max", "name": "Max"}, {"type": "min", "name": "Min"}]}
         })
 
     option_price = {
         "tooltip": {"trigger": "axis", "valueFormatter": "(value) => '$' + Number(value).toFixed(1)"},
-        "legend": {"data": species_list, "top": "bottom", "type": "scroll"},
+        "legend": {"data": group_list_p, "top": "bottom", "type": "scroll"},
         "grid": {"left": "3%", "right": "4%", "bottom": "15%", "containLabel": True},
         "toolbox": {"feature": {"magicType": {"type": ["line", "bar"]}, "saveAsImage": {}}},
         "dataZoom": [{"type": "slider", "xAxisIndex": 0, "start": 0, "end": 100}, {"type": "inside"}],
