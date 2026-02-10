@@ -469,6 +469,105 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             st.plotly_chart(px.bar(top_imp, y="importer_name", x="total_value_usd", orientation='h', title="🛒 Top 10 Buyers", color="total_value_usd", color_continuous_scale="Teal", text_auto='.2s'), use_container_width=True)
         st.divider()
 
+# ============================================
+        # 4.1 新增交易主体 (New Market Entrants) - [新增功能]
+        # ============================================
+        st.subheader("🆕 New Market Entrants (新增交易主体)")
+        
+        with st.expander("ℹ️ Logic Explanation (逻辑说明)", expanded=False):
+            st.caption("""
+            **如何定义 '新增 (New)'?**
+            系统会计算当前加载数据中每个公司的**首次出现日期 (First Seen Date)**。
+            如果某公司的首次交易日期晚于截止时间（例如3个月前），则被视为新增客户。
+            
+            ⚠️ **注意**: 请确保加载了足够的历史数据（例如选择 'Last Year'）。如果你只加载了最近一个月的数据，所有人都会被视为'新增'。
+            """)
+
+        # 1. 选项控制
+        c_new1, c_new2 = st.columns([1, 3])
+        with c_new1:
+            lookback_opt = st.radio("Timeframe (时间范围):", ["Last 3 Months (近3月)", "Last 6 Months (近6月)"], horizontal=True)
+            
+        # 2. 计算逻辑
+        # 确保日期列是 datetime 格式
+        df['dt_obj'] = pd.to_datetime(df['transaction_date'])
+        max_date = df['dt_obj'].max() # 数据中的最近日期
+        
+        days_back = 90 if "3" in lookback_opt else 180
+        cutoff_date = max_date - timedelta(days=days_back)
+        
+        st.markdown(f"**Analysis Period:** New entities appearing after **{cutoff_date.date()}**")
+
+        # 3. 筛选数据
+        # --- New Buyers (Importers) ---
+        # 按买家分组，找到每个买家的最早交易日期
+        imp_stats = df.groupby('importer_name').agg(
+            first_seen=('dt_obj', 'min'),
+            total_val=('total_value_usd', 'sum'),
+            count=('unique_record_id', 'count')
+        ).reset_index()
+        
+        # 筛选：最早出现时间 >= 截止时间 且排除 Unknown
+        new_imps = imp_stats[
+            (imp_stats['first_seen'] >= cutoff_date) & 
+            (imp_stats['importer_name'] != 'Unknown')
+        ].nlargest(10, 'total_val')
+
+        # --- New Sellers (Exporters) ---
+        # 按卖家分组，找到每个卖家的最早交易日期
+        exp_stats = df.groupby('exporter_name').agg(
+            first_seen=('dt_obj', 'min'),
+            total_val=('total_value_usd', 'sum'),
+            count=('unique_record_id', 'count')
+        ).reset_index()
+        
+        # 筛选
+        new_exps = exp_stats[
+            (exp_stats['first_seen'] >= cutoff_date) & 
+            (exp_stats['exporter_name'] != 'Unknown')
+        ].nlargest(10, 'total_val')
+
+        # 4. 绘图
+        nb1, nb2 = st.columns(2)
+        
+        with nb1:
+            if not new_imps.empty:
+                st.markdown(f"##### 🛒 Top 10 New Buyers ({lookback_opt})")
+                fig_new_imp = px.bar(
+                    new_imps, 
+                    y="importer_name", 
+                    x="total_value_usd", 
+                    orientation='h',
+                    color="total_value_usd", 
+                    color_continuous_scale="Teal",
+                    text_auto='.2s',
+                    hover_data=['first_seen', 'count']
+                )
+                fig_new_imp.update_layout(yaxis={'categoryorder':'total ascending'}) # 让最大的在上面
+                st.plotly_chart(fig_new_imp, use_container_width=True)
+            else:
+                st.info("No new buyers found in this period.")
+
+        with nb2:
+            if not new_exps.empty:
+                st.markdown(f"##### 🔥 Top 10 New Sellers ({lookback_opt})")
+                fig_new_exp = px.bar(
+                    new_exps, 
+                    y="exporter_name", 
+                    x="total_value_usd", 
+                    orientation='h',
+                    color="total_value_usd", 
+                    color_continuous_scale="Oranges", 
+                    text_auto='.2s',
+                    hover_data=['first_seen', 'count']
+                )
+                fig_new_exp.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig_new_exp, use_container_width=True)
+            else:
+                st.info("No new sellers found in this period.")
+        
+        st.divider()
+
         # ============================================
         # 5. 港口分析 (Port Analysis)
         # ============================================
