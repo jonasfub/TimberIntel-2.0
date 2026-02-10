@@ -399,7 +399,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
 
         # ============================================
-        # 3. 价格分析 (Price Analysis) - [修改: 分行显示]
+        # 3. 价格分析 (Price Analysis)
         # ============================================
         st.subheader("🏷️ Price Analysis (价格分析)")
         if not df_clean_qty.empty:
@@ -411,14 +411,12 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             price_sp = df_clean_qty.groupby('Species').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
             st.plotly_chart(px.bar(price_sp, x="Species", y="avg_price", title=f"Avg Price by Species (USD/{target_unit})", color="avg_price", color_continuous_scale="Greens", text_auto='.0f'), use_container_width=True)
             
-            # --- 🔥 [修改] Monthly Price & Volume Trend (Split into two distinct Bar Charts) ---
+            # Monthly Volume & Price Trend
             st.markdown("##### 📉 Monthly Volume & Price Trends (月度量价走势 - 拆分)")
             
-            # 1. 准备聚合数据
             trend_df = df_clean_qty.groupby(['Month', 'Species'])[['quantity', 'total_value_usd']].sum().reset_index()
             trend_df['avg_price'] = trend_df.apply(lambda x: x['total_value_usd']/x['quantity'] if x['quantity']>0 else 0, axis=1)
             
-            # 2. Chart A: Monthly Volume Trend (Bar) - Row 1
             st.markdown("**1. Monthly Volume Trend (月度数量趋势)**")
             fig_vol = px.bar(
                 trend_df, 
@@ -427,12 +425,10 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 color="Species",
                 title=f"Monthly Volume ({target_unit})",
                 category_orders={"Month": sorted_months},
-                barmode='stack' # 堆叠显示总量
+                barmode='stack'
             )
             st.plotly_chart(fig_vol, use_container_width=True)
             
-            # 3. Chart B: Monthly Price Trend (Bar) - Row 2
-            # 注意：单价不应该堆叠（叠加单价没有意义），所以这里使用 barmode='group' 分组显示
             st.markdown("**2. Monthly Unit Price Trend (月度单价趋势)**")
             fig_price = px.bar(
                 trend_df, 
@@ -441,12 +437,10 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 color="Species",
                 title="Monthly Avg Unit Price (USD)",
                 category_orders={"Month": sorted_months},
-                barmode='group', # 分组显示，方便对比不同树种的价格
+                barmode='group',
                 text_auto='.0f'
             )
-            # 优化 Price Chart 的显示，避免柱子太细
             fig_price.update_layout(bargap=0.15, bargroupgap=0.1)
-            
             st.plotly_chart(fig_price, use_container_width=True)
 
         else:
@@ -469,7 +463,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             st.plotly_chart(px.bar(top_imp, y="importer_name", x="total_value_usd", orientation='h', title="🛒 Top 10 Buyers", color="total_value_usd", color_continuous_scale="Teal", text_auto='.2s'), use_container_width=True)
         st.divider()
 
-# ============================================
+        # ============================================
         # 4.1 新增交易主体 (New Market Entrants) - [新增功能]
         # ============================================
         st.subheader("🆕 New Market Entrants (新增交易主体)")
@@ -500,28 +494,24 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
 
         # 3. 筛选数据
         # --- New Buyers (Importers) ---
-        # 按买家分组，找到每个买家的最早交易日期
         imp_stats = df.groupby('importer_name').agg(
             first_seen=('dt_obj', 'min'),
-            total_val=('total_value_usd', 'sum'),
+            total_val=('total_value_usd', 'sum'), # 新列名 total_val
             count=('unique_record_id', 'count')
         ).reset_index()
         
-        # 筛选：最早出现时间 >= 截止时间 且排除 Unknown
         new_imps = imp_stats[
             (imp_stats['first_seen'] >= cutoff_date) & 
             (imp_stats['importer_name'] != 'Unknown')
         ].nlargest(10, 'total_val')
 
         # --- New Sellers (Exporters) ---
-        # 按卖家分组，找到每个卖家的最早交易日期
         exp_stats = df.groupby('exporter_name').agg(
             first_seen=('dt_obj', 'min'),
-            total_val=('total_value_usd', 'sum'),
+            total_val=('total_value_usd', 'sum'), # 新列名 total_val
             count=('unique_record_id', 'count')
         ).reset_index()
         
-        # 筛选
         new_exps = exp_stats[
             (exp_stats['first_seen'] >= cutoff_date) & 
             (exp_stats['exporter_name'] != 'Unknown')
@@ -536,14 +526,14 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 fig_new_imp = px.bar(
                     new_imps, 
                     y="importer_name", 
-                    x="total_value_usd", 
+                    x="total_val",          # [Fix] 使用 total_val
                     orientation='h',
-                    color="total_value_usd", 
+                    color="total_val",      # [Fix] 使用 total_val
                     color_continuous_scale="Teal",
                     text_auto='.2s',
                     hover_data=['first_seen', 'count']
                 )
-                fig_new_imp.update_layout(yaxis={'categoryorder':'total ascending'}) # 让最大的在上面
+                fig_new_imp.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_new_imp, use_container_width=True)
             else:
                 st.info("No new buyers found in this period.")
@@ -554,9 +544,9 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 fig_new_exp = px.bar(
                     new_exps, 
                     y="exporter_name", 
-                    x="total_value_usd", 
+                    x="total_val",          # [Fix] 使用 total_val
                     orientation='h',
-                    color="total_value_usd", 
+                    color="total_val",      # [Fix] 使用 total_val
                     color_continuous_scale="Oranges", 
                     text_auto='.2s',
                     hover_data=['first_seen', 'count']
