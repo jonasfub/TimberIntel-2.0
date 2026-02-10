@@ -76,12 +76,14 @@ if hasattr(config, 'PORT_CODE_TO_NAME'):
 df_raw['transaction_date'] = pd.to_datetime(df_raw['transaction_date'])
 df_raw['Month'] = df_raw['transaction_date'].dt.to_period('M').astype(str)
 
-# 3.4 树种识别 (Species ID)
+# 3.4 树种识别 (Species ID) 与 产品描述处理
+if 'product_desc_text' not in df_raw.columns:
+    df_raw['product_desc_text'] = 'Unknown'
+else:
+    df_raw['product_desc_text'] = df_raw['product_desc_text'].fillna("Unknown")
+
 if 'Species' not in df_raw.columns:
-    if 'product_desc_text' in df_raw.columns:
-        df_raw['Species'] = df_raw['product_desc_text'].apply(utils.identify_species)
-    else:
-        df_raw['Species'] = 'Unknown'
+    df_raw['Species'] = df_raw['product_desc_text'].apply(utils.identify_species)
 
 # 3.5 国家名称映射 (Country Names)
 def get_country_name_en(code):
@@ -144,6 +146,10 @@ with st.sidebar:
     all_species = sorted(df_raw['Species'].astype(str).unique())
     sel_species = st.multiselect("🌲 Species (树种)", all_species, placeholder="All Species")
     
+    # [NEW] 新增产品描述筛选
+    all_products = sorted(df_raw['product_desc_text'].astype(str).unique())
+    sel_products = st.multiselect("📦 Product (产品描述)", all_products, placeholder="All Products")
+    
     all_dests = sorted(df_raw['dest_name'].astype(str).unique())
     sel_dests = st.multiselect("🛬 Destination (进口国)", all_dests, placeholder="All Destinations")
 
@@ -160,7 +166,7 @@ if enable_price_clean:
     df['calc_price'] = df.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 else 0, axis=1)
     df = df[df['calc_price'] >= min_valid_price]
 
-# 3. 应用业务筛选 (Date, Origin, Species, Dest)
+# 3. 应用业务筛选 (Date, Origin, Species, Product, Dest)
 mask = pd.Series(True, index=df.index)
 
 if isinstance(date_range, tuple) and len(date_range) == 2:
@@ -169,6 +175,7 @@ if isinstance(date_range, tuple) and len(date_range) == 2:
 
 if sel_origins: mask &= df['origin_name'].isin(sel_origins)
 if sel_species: mask &= df['Species'].isin(sel_species)
+if sel_products: mask &= df['product_desc_text'].isin(sel_products) # [NEW] 应用产品筛选
 if sel_dests: mask &= df['dest_name'].isin(sel_dests)
 
 df = df[mask].copy()
@@ -369,3 +376,5 @@ with c_info:
     else: st.markdown("- **Origin:** All")
     if sel_species: st.markdown(f"- **Species:** {', '.join(sel_species)}")
     else: st.markdown("- **Species:** All")
+    if sel_products: st.markdown(f"- **Products:** {', '.join(sel_products)}") # [NEW]
+    else: st.markdown("- **Products:** All")
