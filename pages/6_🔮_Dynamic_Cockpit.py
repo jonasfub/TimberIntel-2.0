@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from streamlit_echarts import st_echarts
+from streamlit_echarts import st_echarts, JsCode
 import sys
 import os
 
@@ -193,12 +193,11 @@ if df.empty:
 # ==========================================
 
 # ------------------------------------------
-# Row 1: Volume Trend (数量趋势) - [已升级 🆙]
+# Row 1: Volume Trend
 # ------------------------------------------
 st.subheader("1. 📈 Volume Trends (数量趋势)")
 
 with st.container():
-    # 🔘 维度切换按钮 (新增：Dest Port)
     c_view, _ = st.columns([3, 5])
     with c_view:
         view_dim = st.radio(
@@ -208,7 +207,6 @@ with st.container():
             key="vol_group"
         )
     
-    # 映射选择到列名
     dim_map = {
         "Species (树种)": "Species",
         "Product (产品)": "Product_Category",
@@ -217,7 +215,6 @@ with st.container():
     }
     target_col = dim_map[view_dim]
 
-    # 数据聚合
     vol_data = df.groupby(['Month', target_col])['quantity'].sum().reset_index()
     months = sorted(vol_data['Month'].unique().tolist())
     group_list = sorted(vol_data[target_col].astype(str).unique().tolist())
@@ -249,13 +246,12 @@ with st.container():
 st.divider()
 
 # ------------------------------------------
-# Row 2: Price Trend (单价走势) - [已升级 🆙]
+# Row 2: Price Trend
 # ------------------------------------------
 st.subheader("2. 💰 Price Trends (单价走势)")
 st.caption(f"Calculated as: Total Value / Total Quantity (Unit: USD / {target_unit})")
 
 with st.container():
-    # 🔘 维度切换按钮 (新增：Dest Port)
     c_view_p, _ = st.columns([3, 5])
     with c_view_p:
         view_dim_p = st.radio(
@@ -264,16 +260,8 @@ with st.container():
             horizontal=True,
             key="price_group"
         )
-    # 复用或重新定义映射
-    dim_map_p = {
-        "Species (树种)": "Species",
-        "Product (产品)": "Product_Category",
-        "Origin (出口国)": "origin_name",
-        "Dest Port (卸货港)": "port_of_arrival"
-    }
-    target_col_p = dim_map_p[view_dim_p]
+    target_col_p = dim_map[view_dim_p]
 
-    # 数据聚合
     price_agg = df.groupby(['Month', target_col_p])[['total_value_usd', 'quantity']].sum().reset_index()
     price_agg['avg_price'] = price_agg.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 else 0, axis=1)
     
@@ -409,3 +397,80 @@ with c_info:
     else: st.markdown("- **Product:** All")
     if sel_origins: st.markdown(f"- **Origin:** {', '.join(sel_origins)}")
     else: st.markdown("- **Origin:** All")
+
+st.divider()
+
+# ------------------------------------------
+# Row 5: GeoMap (Effect Scatter) - [新增 🆕]
+# ------------------------------------------
+st.subheader("5. 🌏 Global Port Distribution (全球港口分布)")
+
+# 准备地图数据
+map_df = df.groupby('port_of_arrival')[['quantity', 'total_value_usd']].sum().reset_index()
+
+# 获取坐标函数 (复用 MarketIntelApp 的逻辑)
+def get_coords(port_name):
+    if not port_name: return None
+    p_upper = str(port_name).upper().strip()
+    # 1. 尝试直接匹配
+    if hasattr(config, 'PORT_COORDINATES'):
+        if p_upper in config.PORT_COORDINATES:
+            return config.PORT_COORDINATES[p_upper]
+        # 2. 尝试模糊匹配 (只要包含 key)
+        for key in config.PORT_COORDINATES:
+            if key in p_upper and len(key) > 3:
+                return config.PORT_COORDINATES[key]
+    return None
+
+# 构建 ECharts 数据格式
+geo_data = []
+for _, row in map_df.iterrows():
+    coords = get_coords(row['port_of_arrival'])
+    if coords:
+        geo_data.append({
+            "name": row['port_of_arrival'],
+            "value": [coords['lon'], coords['lat'], row['quantity']], # ECharts要求: [lon, lat, value]
+            "formatted_val": f"{row['quantity']:,.0f}"
+        })
+
+# 渲染地图
+if geo_data:
+    option_map = {
+        "tooltip": {
+            "trigger": "item",
+            "formatter": "{b}: {c[2]} " + target_unit  # 显示: 港口名: 数量 单位
+        },
+        "geo": {
+            "map": "world",
+            "roam": True, # 允许缩放和平移
+            "zoom": 1.2,
+            "label": {"emphasis": {"show": False}},
+            "itemStyle": {
+                "normal": {"areaColor": "#323c48", "borderColor": "#111"},
+                "emphasis": {"areaColor": "#2a333d"}
+            }
+        },
+        "series": [
+            {
+                "name": f"Volume ({target_unit})",
+                "type": "effectScatter", # 带有涟漪特效的散点
+                "coordinateSystem": "geo",
+                "data": geo_data,
+                "symbolSize": JsCode("""
+                    function (val) {
+                        return Math.max(5, Math.min(val[2] / 500, 30)); 
+                    }
+                """).js_code, # 动态大小: 最小5，最大30 (根据数值调整除数)
+                "showEffectOn": "render",
+                "rippleEffect": {"brushType": "stroke"},
+                "hoverAnimation": True,
+                "label": {"normal": {"formatter": "{b}", "position": "right", "show": False}, "emphasis": {"show": True}},
+                "itemStyle": {
+                    "normal": {"color": "#f4e925", "shadowBlur": 10, "shadowColor": "#333"}
+                }
+            }
+        ]
+    }
+    st_echarts(options=option_map, height="500px", key="echart_map")
+else:
+    st.info("ℹ️ No coordinate data available for current ports.")
