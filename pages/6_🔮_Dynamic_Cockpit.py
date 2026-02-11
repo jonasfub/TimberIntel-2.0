@@ -198,12 +198,12 @@ if df.empty:
 st.subheader("1. 📈 Volume Trends (数量趋势)")
 
 with st.container():
-    # 🔘 维度切换按钮
-    c_view, _ = st.columns([2, 5])
+    # 🔘 维度切换按钮 (新增：Dest Port)
+    c_view, _ = st.columns([3, 5])
     with c_view:
         view_dim = st.radio(
             "Group By (分组依据):", 
-            ["Species (树种)", "Product (产品)", "Origin (出口国)"], 
+            ["Species (树种)", "Product (产品)", "Origin (出口国)", "Dest Port (卸货港)"], 
             horizontal=True,
             key="vol_group"
         )
@@ -212,14 +212,15 @@ with st.container():
     dim_map = {
         "Species (树种)": "Species",
         "Product (产品)": "Product_Category",
-        "Origin (出口国)": "origin_name"
+        "Origin (出口国)": "origin_name",
+        "Dest Port (卸货港)": "port_of_arrival"
     }
     target_col = dim_map[view_dim]
 
     # 数据聚合
     vol_data = df.groupby(['Month', target_col])['quantity'].sum().reset_index()
     months = sorted(vol_data['Month'].unique().tolist())
-    group_list = sorted(vol_data[target_col].unique().tolist())
+    group_list = sorted(vol_data[target_col].astype(str).unique().tolist())
     
     vol_series = []
     for item in group_list:
@@ -254,22 +255,29 @@ st.subheader("2. 💰 Price Trends (单价走势)")
 st.caption(f"Calculated as: Total Value / Total Quantity (Unit: USD / {target_unit})")
 
 with st.container():
-    # 🔘 维度切换按钮 (独立控制)
-    c_view_p, _ = st.columns([2, 5])
+    # 🔘 维度切换按钮 (新增：Dest Port)
+    c_view_p, _ = st.columns([3, 5])
     with c_view_p:
         view_dim_p = st.radio(
             "Group By (分组依据):", 
-            ["Species (树种)", "Product (产品)", "Origin (出口国)"], 
+            ["Species (树种)", "Product (产品)", "Origin (出口国)", "Dest Port (卸货港)"], 
             horizontal=True,
             key="price_group"
         )
-    target_col_p = dim_map[view_dim_p]
+    # 复用或重新定义映射
+    dim_map_p = {
+        "Species (树种)": "Species",
+        "Product (产品)": "Product_Category",
+        "Origin (出口国)": "origin_name",
+        "Dest Port (卸货港)": "port_of_arrival"
+    }
+    target_col_p = dim_map_p[view_dim_p]
 
     # 数据聚合
     price_agg = df.groupby(['Month', target_col_p])[['total_value_usd', 'quantity']].sum().reset_index()
     price_agg['avg_price'] = price_agg.apply(lambda x: x['total_value_usd'] / x['quantity'] if x['quantity'] > 0 else 0, axis=1)
     
-    group_list_p = sorted(price_agg[target_col_p].unique().tolist())
+    group_list_p = sorted(price_agg[target_col_p].astype(str).unique().tolist())
     price_series = []
     
     for item in group_list_p:
