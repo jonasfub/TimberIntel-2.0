@@ -403,74 +403,103 @@ st.divider()
 # ------------------------------------------
 # Row 5: GeoMap (Effect Scatter) - [新增 🆕]
 # ------------------------------------------
+import plotly.express as px  # 确保头部引入了 plotly.express
+
+# ... (保留上面的所有代码) ...
+
+st.divider()
+
+# ------------------------------------------
+# Row 5: Global Port Distribution (全球港口分布) - [已修复: 改为 3D Plotly]
+# ------------------------------------------
 st.subheader("5. 🌏 Global Port Distribution (全球港口分布)")
 
-# 准备地图数据
+# 1. 准备聚合数据
+# 按港口汇总数量和金额
 map_df = df.groupby('port_of_arrival')[['quantity', 'total_value_usd']].sum().reset_index()
 
-# 获取坐标函数 (复用 MarketIntelApp 的逻辑)
+# 2. 获取坐标 (复用 config 中的字典)
 def get_coords(port_name):
-    if not port_name: return None
+    if not port_name: return None, None
     p_upper = str(port_name).upper().strip()
-    # 1. 尝试直接匹配
+    
+    # 尝试直接匹配
     if hasattr(config, 'PORT_COORDINATES'):
         if p_upper in config.PORT_COORDINATES:
-            return config.PORT_COORDINATES[p_upper]
-        # 2. 尝试模糊匹配 (只要包含 key)
+            return config.PORT_COORDINATES[p_upper]['lat'], config.PORT_COORDINATES[p_upper]['lon']
+        
+        # 尝试模糊匹配 (Key 包含在 Port Name 中，例如 'SHANGHAI' in 'SHANGHAI PT')
         for key in config.PORT_COORDINATES:
             if key in p_upper and len(key) > 3:
-                return config.PORT_COORDINATES[key]
-    return None
+                return config.PORT_COORDINATES[key]['lat'], config.PORT_COORDINATES[key]['lon']
+    return None, None
 
-# 构建 ECharts 数据格式
-geo_data = []
-for _, row in map_df.iterrows():
-    coords = get_coords(row['port_of_arrival'])
-    if coords:
-        geo_data.append({
-            "name": row['port_of_arrival'],
-            "value": [coords['lon'], coords['lat'], row['quantity']], # ECharts要求: [lon, lat, value]
-            "formatted_val": f"{row['quantity']:,.0f}"
-        })
+# 应用坐标
+map_df['lat'], map_df['lon'] = zip(*map_df['port_of_arrival'].map(get_coords))
 
-# 渲染地图
-if geo_data:
-    option_map = {
-        "tooltip": {
-            "trigger": "item",
-            "formatter": "{b}: {c[2]} " + target_unit  # 显示: 港口名: 数量 单位
-        },
-        "geo": {
-            "map": "world",
-            "roam": True, # 允许缩放和平移
-            "zoom": 1.2,
-            "label": {"emphasis": {"show": False}},
-            "itemStyle": {
-                "normal": {"areaColor": "#323c48", "borderColor": "#111"},
-                "emphasis": {"areaColor": "#2a333d"}
-            }
-        },
-        "series": [
-            {
-                "name": f"Volume ({target_unit})",
-                "type": "effectScatter", # 带有涟漪特效的散点
-                "coordinateSystem": "geo",
-                "data": geo_data,
-                "symbolSize": JsCode("""
-                    function (val) {
-                        return Math.max(5, Math.min(val[2] / 500, 30)); 
-                    }
-                """).js_code, # 动态大小: 最小5，最大30 (根据数值调整除数)
-                "showEffectOn": "render",
-                "rippleEffect": {"brushType": "stroke"},
-                "hoverAnimation": True,
-                "label": {"normal": {"formatter": "{b}", "position": "right", "show": False}, "emphasis": {"show": True}},
-                "itemStyle": {
-                    "normal": {"color": "#f4e925", "shadowBlur": 10, "shadowColor": "#333"}
-                }
-            }
-        ]
-    }
-    st_echarts(options=option_map, height="500px", key="echart_map")
-else:
-    st.info("ℹ️ No coordinate data available for current ports.")
+# 3. 过滤掉没有坐标的港口
+plot_map_df = map_df.dropna(subset=['lat', 'lon'])
+missing_ports = map_df[map_df['lat'].isna()]['port_of_arrival'].unique().tolist()
+
+# 4. 渲染地图
+c_map, c_list = st.columns([3, 1])
+
+with c_map:
+    if not plot_map_df.empty:
+        # 使用 Plotly 绘制 3D 地球
+        fig_map = px.scatter_geo(
+            plot_map_df,
+            lat='lat',
+            lon='lon',
+            size='quantity',             # 点的大小代表货量
+            hover_name='port_of_arrival',
+            hover_data={'quantity': True, 'total_value_usd': True, 'lat': False, 'lon': False},
+            projection="orthographic",   # 🌍 关键：改为 3D 地球投影
+            title=f"Global Arrival Ports ({target_unit})",
+            template="plotly_dark"       # 🌑 关键：使用深色模式
+        )
+        
+        # 调整视觉样式
+        fig_map.update_geos(
+            showcountries=True, countrycolor="#444",
+            showcoastlines=True, coastlinecolor="#444",
+            showland=True, landcolor="#1e1e1e",
+            showocean=True, oceancolor="#0e1117", # 配合 Streamlit 深色背景
+            showlakes=False
+        )
+        fig_map.update_traces(marker=dict(color="#00f2ff", line=dict(width=0))) # 荧光蓝配色
+        fig_map.update_layout(
+            margin={"r":0,"t":30,"l":0,"b":0},
+            height=500,
+            paper_bgcolor="rgba(0,0,0,0)", # 透明背景
+        )
+        st.plotly_chart(fig_map, use_container_width=True)
+    else:
+        st.warning("⚠️ No coordinate data matched for current filtered ports.")
+
+with c_list:
+    st.markdown("##### 📍 Port Stats")
+    
+    # 显示匹配成功的 Top 5
+    if not plot_map_df.empty:
+        st.caption("Top 5 Ports (Matched):")
+        top_ports = plot_map_df.nlargest(5, 'quantity')[['port_of_arrival', 'quantity']]
+        st.dataframe(
+            top_ports, 
+            column_config={
+                "quantity": st.column_config.ProgressColumn(
+                    "Volume", 
+                    format="%d", 
+                    min_value=0, 
+                    max_value=plot_map_df['quantity'].max()
+                )
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+    
+    # 显示未匹配的港口 (方便调试)
+    if missing_ports:
+        with st.expander(f"⚠️ Unmapped Ports ({len(missing_ports)})"):
+            st.write(missing_ports)
+            st.caption("Add these to `config.PORT_COORDINATES` to visualize them.")
