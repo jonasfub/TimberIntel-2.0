@@ -408,17 +408,19 @@ import plotly.express as px  # 确保头部引入了 plotly.express
 # ... (保留上面的所有代码) ...
 
 st.divider()
+# ... (保留上面的代码) ...
+
+st.divider()
 
 # ------------------------------------------
-# Row 5: Global Port Distribution (全球港口分布) - [已修复: 改为 3D Plotly]
+# Row 5: Global Port Distribution (全球港口分布) - [已升级: 全宽显示 + 详情折叠]
 # ------------------------------------------
 st.subheader("5. 🌏 Global Port Distribution (全球港口分布)")
 
 # 1. 准备聚合数据
-# 按港口汇总数量和金额
 map_df = df.groupby('port_of_arrival')[['quantity', 'total_value_usd']].sum().reset_index()
 
-# 2. 获取坐标 (复用 config 中的字典)
+# 2. 获取坐标
 def get_coords(port_name):
     if not port_name: return None, None
     p_upper = str(port_name).upper().strip()
@@ -428,7 +430,7 @@ def get_coords(port_name):
         if p_upper in config.PORT_COORDINATES:
             return config.PORT_COORDINATES[p_upper]['lat'], config.PORT_COORDINATES[p_upper]['lon']
         
-        # 尝试模糊匹配 (Key 包含在 Port Name 中，例如 'SHANGHAI' in 'SHANGHAI PT')
+        # 尝试模糊匹配
         for key in config.PORT_COORDINATES:
             if key in p_upper and len(key) > 3:
                 return config.PORT_COORDINATES[key]['lat'], config.PORT_COORDINATES[key]['lon']
@@ -441,65 +443,53 @@ map_df['lat'], map_df['lon'] = zip(*map_df['port_of_arrival'].map(get_coords))
 plot_map_df = map_df.dropna(subset=['lat', 'lon'])
 missing_ports = map_df[map_df['lat'].isna()]['port_of_arrival'].unique().tolist()
 
-# 4. 渲染地图
-c_map, c_list = st.columns([3, 1])
-
-with c_map:
-    if not plot_map_df.empty:
-        # 使用 Plotly 绘制 3D 地球
-        fig_map = px.scatter_geo(
-            plot_map_df,
-            lat='lat',
-            lon='lon',
-            size='quantity',             # 点的大小代表货量
-            hover_name='port_of_arrival',
-            hover_data={'quantity': True, 'total_value_usd': True, 'lat': False, 'lon': False},
-            projection="orthographic",   # 🌍 关键：改为 3D 地球投影
-            title=f"Global Arrival Ports ({target_unit})",
-            template="plotly_dark"       # 🌑 关键：使用深色模式
-        )
-        
-        # 调整视觉样式
-        fig_map.update_geos(
-            showcountries=True, countrycolor="#444",
-            showcoastlines=True, coastlinecolor="#444",
-            showland=True, landcolor="#1e1e1e",
-            showocean=True, oceancolor="#0e1117", # 配合 Streamlit 深色背景
-            showlakes=False
-        )
-        fig_map.update_traces(marker=dict(color="#00f2ff", line=dict(width=0))) # 荧光蓝配色
-        fig_map.update_layout(
-            margin={"r":0,"t":30,"l":0,"b":0},
-            height=500,
-            paper_bgcolor="rgba(0,0,0,0)", # 透明背景
-        )
-        st.plotly_chart(fig_map, use_container_width=True)
-    else:
-        st.warning("⚠️ No coordinate data matched for current filtered ports.")
-
-with c_list:
-    st.markdown("##### 📍 Port Stats")
+# 4. 渲染地图 (取消 st.columns 分栏，直接显示)
+if not plot_map_df.empty:
+    # 使用 Plotly 绘制 3D 地球
+    fig_map = px.scatter_geo(
+        plot_map_df,
+        lat='lat',
+        lon='lon',
+        size='quantity',             
+        hover_name='port_of_arrival',
+        hover_data={'quantity': True, 'total_value_usd': True, 'lat': False, 'lon': False},
+        projection="orthographic",   # 3D 地球
+        title=f"Global Arrival Ports ({target_unit})",
+        template="plotly_dark"       
+    )
     
-    # 显示匹配成功的 Top 5
-    if not plot_map_df.empty:
-        st.caption("Top 5 Ports (Matched):")
-        top_ports = plot_map_df.nlargest(5, 'quantity')[['port_of_arrival', 'quantity']]
-        st.dataframe(
-            top_ports, 
-            column_config={
-                "quantity": st.column_config.ProgressColumn(
-                    "Volume", 
-                    format="%d", 
-                    min_value=0, 
-                    max_value=plot_map_df['quantity'].max()
-                )
-            },
-            hide_index=True,
-            use_container_width=True
-        )
+    # 调整视觉样式：增加高度，减少边距，让球体更大
+    fig_map.update_geos(
+        showcountries=True, countrycolor="#444",
+        showcoastlines=True, coastlinecolor="#444",
+        showland=True, landcolor="#1e1e1e",
+        showocean=True, oceancolor="#0e1117", 
+        showlakes=False,
+        projection_scale=1.1 # 🟢 放大一点地球的显示比例
+    )
+    fig_map.update_traces(marker=dict(color="#00f2ff", line=dict(width=0), opacity=0.8)) 
+    fig_map.update_layout(
+        margin={"r":0,"t":30,"l":0,"b":0}, # 🟢 极简边距
+        height=600,                        # 🟢 增加高度 (从500 -> 600)
+        paper_bgcolor="rgba(0,0,0,0)", 
+    )
     
-    # 显示未匹配的港口 (方便调试)
-    if missing_ports:
-        with st.expander(f"⚠️ Unmapped Ports ({len(missing_ports)})"):
-            st.write(missing_ports)
-            st.caption("Add these to `config.PORT_COORDINATES` to visualize them.")
+    # 全宽显示
+    st.plotly_chart(fig_map, use_container_width=True)
+
+    # 5. 将列表移入折叠面板
+    with st.expander("📍 View Port Statistics (查看港口详情数据)"):
+        c_tbl, c_miss = st.columns([2, 1])
+        with c_tbl:
+            st.markdown("**Top Ports by Volume:**")
+            st.dataframe(
+                plot_map_df.sort_values('quantity', ascending=False).head(20)[['port_of_arrival', 'quantity', 'total_value_usd']],
+                use_container_width=True,
+                hide_index=True
+            )
+        with c_miss:
+            if missing_ports:
+                st.markdown("**⚠️ Unmapped Ports (无坐标):**")
+                st.write(missing_ports)
+else:
+    st.warning("⚠️ No coordinate data matched for current filtered ports.")
