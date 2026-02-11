@@ -209,6 +209,7 @@ PORT_CODE_TO_NAME = {
     "INKAT1": "Kattupalli",
     "INENR1": "Ennore",
     "INTUT1": "Tuticorin",
+    "INTUT6": "Tuticorin",
     "INIXY1": "Kandla",
     "INHZA1": "Hazira",
     "INCCU1": "Kolkata",
