@@ -198,19 +198,21 @@ if df.empty:
 st.subheader("1. 📈 Volume Trends (数量趋势)")
 
 with st.container():
-    c_view, _ = st.columns([3, 5])
+    c_view, _ = st.columns([4, 4]) # 稍微调宽一点左边，容纳更多按钮
     with c_view:
         view_dim = st.radio(
             "Group By (分组依据):", 
-            ["Species (树种)", "Product (产品)", "Origin (出口国)", "Dest Port (卸货港)"], 
+            ["Species (树种)", "Product (产品)", "Origin (出口国)", "Dest (进口国)", "Dest Port (卸货港)"],  # ✨ 新增 "Dest (进口国)"
             horizontal=True,
             key="vol_group"
         )
     
+    # 更新映射字典
     dim_map = {
         "Species (树种)": "Species",
         "Product (产品)": "Product_Category",
         "Origin (出口国)": "origin_name",
+        "Dest (进口国)": "dest_name",           # ✨ 新增映射
         "Dest Port (卸货港)": "port_of_arrival"
     }
     target_col = dim_map[view_dim]
@@ -252,11 +254,11 @@ st.subheader("2. 💰 Price Trends (单价走势)")
 st.caption(f"Calculated as: Total Value / Total Quantity (Unit: USD / {target_unit})")
 
 with st.container():
-    c_view_p, _ = st.columns([3, 5])
+    c_view_p, _ = st.columns([4, 4]) # 稍微调宽一点左边
     with c_view_p:
         view_dim_p = st.radio(
             "Group By (分组依据):", 
-            ["Species (树种)", "Product (产品)", "Origin (出口国)", "Dest Port (卸货港)"], 
+            ["Species (树种)", "Product (产品)", "Origin (出口国)", "Dest (进口国)", "Dest Port (卸货港)"], # ✨ 同样新增 "Dest (进口国)"
             horizontal=True,
             key="price_group"
         )
@@ -294,6 +296,9 @@ with st.container():
 
 st.divider()
 
+# ------------------------------------------
+# 下面的 Row 3, 4, 5 (Sankey, Sunburst, GeoMap) 保持不变
+# ...
 # ------------------------------------------
 # Row 3: Sankey Flow
 # ------------------------------------------
