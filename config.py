@@ -31,6 +31,8 @@ SPECIES_KEYWORDS = {
     "Spruce":     ["SPRUCE", "PICEA", "WHITEWOOD", "SPF"],
     "Fir":        ["FIR ", "ABIES", "DOUGLAS", "HEMLOCK"],
     "Pine (Gen)": ["PINE", "PINUS"], 
+    "Macrocarpa": ["MACROCARPA", "HESPEROCYPARIS"],  # 新增
+    "Cypress":    ["CYPRESS", "CUPRESSUS"],         # 新增
     "Larch":      ["LARCH", "LARIX"],
     "Oak":        ["OAK", "QUERCUS", "RED OAK", "WHITE OAK"],
     "Birch":      ["BIRCH", "BETULA"],
@@ -186,7 +188,7 @@ PORT_COORDINATES = {
 # 6. 树种分类归属
 # ==========================================
 SPECIES_CATEGORY_MAP = {
-    "Softwood": ["Radiata", "Spruce", "Fir", "Pine (Gen)", "Larch", "SYP / Taeda"],
+    "Softwood": ["Radiata", "Macrocarpa", "Cypress", "Spruce", "Fir", "Pine (Gen)", "Larch", "SYP / Taeda"],
     "Hardwood": ["Oak", "Birch", "Beech", "Poplar", "Eucalyptus", "Acacia", "Rubberwood", "Teak", "Ash", "Maple", "Cherry", "Walnut", "Meranti"]
 }
 
