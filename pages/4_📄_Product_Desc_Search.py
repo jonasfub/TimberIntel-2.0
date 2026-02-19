@@ -159,7 +159,7 @@ k4.metric(f"均价 (USD/{target_unit})", f"${avg_price:,.1f}")
 
 st.divider()
 
-# --- 图表分析 ---
+# --- 宏观图表分析 ---
 st.markdown("#### 📊 市场结构与趋势 (Market Structure & Trends)")
 c_chart1, c_chart2 = st.columns(2)
 
@@ -186,11 +186,48 @@ with c_chart2:
     )
     st.plotly_chart(fig_trend, use_container_width=True)
 
+st.divider()
+
+# --- 头部企业画像 ---
+st.markdown("#### 🏢 头部企业画像 (Top Players)")
+st.caption("基于检索结果自动聚合的采购与供应巨头。")
+
+c_imp, c_exp = st.columns(2)
+
+# 确保有名字字段且处理空值
+df_result['importer_name'] = df_result['importer_name'].fillna('Unknown')
+df_result['exporter_name'] = df_result['exporter_name'].fillna('Unknown')
+
+with c_imp:
+    # Top 10 Importers (采购商)
+    top_imp = df_result.groupby('importer_name')['quantity'].sum().nlargest(10).sort_values(ascending=True).reset_index()
+    fig_imp = px.bar(
+        top_imp, x='quantity', y='importer_name', orientation='h',
+        title=f"Top 10 采购商 (Importers)",
+        color='quantity', color_continuous_scale='Blues',
+        text_auto='.2s'
+    )
+    fig_imp.update_layout(yaxis_title="")
+    st.plotly_chart(fig_imp, use_container_width=True)
+    
+with c_exp:
+    # Top 10 Exporters (供应商)
+    top_exp = df_result.groupby('exporter_name')['quantity'].sum().nlargest(10).sort_values(ascending=True).reset_index()
+    fig_exp = px.bar(
+        top_exp, x='quantity', y='exporter_name', orientation='h',
+        title=f"Top 10 供应商 (Exporters)",
+        color='quantity', color_continuous_scale='Reds',
+        text_auto='.2s'
+    )
+    fig_exp.update_layout(yaxis_title="")
+    st.plotly_chart(fig_exp, use_container_width=True)
+
+st.divider()
+
 # --- 详细数据表格 ---
 st.markdown("#### 📋 匹配详情数据 (Matched Records)")
 st.caption("你可以在这里直接检查对应的产品原始描述。")
 
-# 把 hs_code 加进了展示列表，方便验证过滤是否生效
 display_cols = ['transaction_date', 'Product_Category', 'hs_code', 'product_desc_text', 'quantity', 'quantity_unit', 'total_value_usd', 'origin_name', 'dest_name', 'importer_name', 'exporter_name']
 final_cols = [c for c in display_cols if c in df_result.columns]
 
