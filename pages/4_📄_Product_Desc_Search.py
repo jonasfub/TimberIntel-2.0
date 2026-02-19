@@ -25,18 +25,30 @@ def get_name_safe(code):
     name = config.COUNTRY_NAME_MAP.get(code, code)
     return str(name).split(' (')[0] if '(' in str(name) else str(name)
 
+# 动态映射 HS Code 到产品分类
+def map_hs_to_category(hs_code):
+    hs_str = str(hs_code)
+    if hasattr(config, 'HS_CODES_MAP'):
+        for category, codes in config.HS_CODES_MAP.items():
+            for c in codes:
+                if hs_str.startswith(c):
+                    return category
+    return "Other Products"
+
 if 'origin_name' not in df_raw.columns:
     df_raw['origin_name'] = df_raw['origin_country_code'].apply(get_name_safe)
 if 'dest_name' not in df_raw.columns:
     df_raw['dest_name'] = df_raw['dest_country_code'].apply(get_name_safe)
 if 'Species' not in df_raw.columns:
     df_raw['Species'] = df_raw['product_desc_text'].apply(utils.identify_species)
+if 'Product_Category' not in df_raw.columns:
+    df_raw['Product_Category'] = df_raw['hs_code'].apply(map_hs_to_category)
 
 # --- 3. 侧边栏：全局数据过滤 ---
 with st.sidebar:
     st.header("🛠️ Global Filters")
     
-    # 单位过滤
+    # 1. 单位过滤
     df_raw['quantity_unit'] = df_raw['quantity_unit'].fillna('Unknown')
     available_units = df_raw['quantity_unit'].unique().tolist()
     default_ix = 0
@@ -45,7 +57,24 @@ with st.sidebar:
     
     target_unit = st.selectbox("📏 统计单位 (Unit):", available_units, index=default_ix)
     
-    # 国家过滤
+    st.divider()
+    
+    # 2. 产品与 HS Code 过滤 (联动逻辑)
+    all_categories = sorted(df_raw['Product_Category'].astype(str).unique())
+    sel_categories = st.multiselect("📦 产品分类 (Category):", all_categories, placeholder="留空为全部")
+    
+    # 动态获取当前选中分类下的 HS Code
+    if sel_categories:
+        temp_hs_df = df_raw[df_raw['Product_Category'].isin(sel_categories)]
+    else:
+        temp_hs_df = df_raw
+        
+    all_hs_codes = sorted(temp_hs_df['hs_code'].astype(str).unique())
+    sel_hs_codes = st.multiselect("🔢 海关编码 (HS Code):", all_hs_codes, placeholder="留空为全部")
+
+    st.divider()
+
+    # 3. 国家过滤
     all_origins = sorted(df_raw['origin_name'].astype(str).unique())
     all_dests = sorted(df_raw['dest_name'].astype(str).unique())
     
@@ -54,8 +83,18 @@ with st.sidebar:
 
 # 先进行基础过滤
 df_filtered = df_raw[df_raw['quantity_unit'] == target_unit].copy()
-if sel_origins: df_filtered = df_filtered[df_filtered['origin_name'].isin(sel_origins)]
-if sel_dests: df_filtered = df_filtered[df_filtered['dest_name'].isin(sel_dests)]
+
+# 应用新增的产品与编码过滤
+if sel_categories: 
+    df_filtered = df_filtered[df_filtered['Product_Category'].isin(sel_categories)]
+if sel_hs_codes: 
+    df_filtered = df_filtered[df_filtered['hs_code'].astype(str).isin(sel_hs_codes)]
+    
+# 应用国家过滤
+if sel_origins: 
+    df_filtered = df_filtered[df_filtered['origin_name'].isin(sel_origins)]
+if sel_dests: 
+    df_filtered = df_filtered[df_filtered['dest_name'].isin(sel_dests)]
 
 # --- 4. 核心功能：文本检索引擎 ---
 st.markdown("### 🔍 规格与描述检索 (Description Engine)")
@@ -151,10 +190,10 @@ with c_chart2:
 st.markdown("#### 📋 匹配详情数据 (Matched Records)")
 st.caption("你可以在这里直接检查对应的产品原始描述。")
 
-display_cols = ['transaction_date', 'product_desc_text', 'quantity', 'quantity_unit', 'total_value_usd', 'origin_name', 'dest_name', 'importer_name', 'exporter_name']
+# 把 hs_code 加进了展示列表，方便验证过滤是否生效
+display_cols = ['transaction_date', 'Product_Category', 'hs_code', 'product_desc_text', 'quantity', 'quantity_unit', 'total_value_usd', 'origin_name', 'dest_name', 'importer_name', 'exporter_name']
 final_cols = [c for c in display_cols if c in df_result.columns]
 
-# 增加一个高亮功能，方便用户查看
 st.dataframe(
     df_result[final_cols].sort_values('transaction_date', ascending=False),
     use_container_width=True,
