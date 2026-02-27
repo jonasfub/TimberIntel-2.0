@@ -52,7 +52,7 @@ SPECIES_KEYWORDS = {
 # ==========================================
 # 3. 快捷区域分组
 # ==========================================
-REGION_ASIA_ALL = ["CHN", "IND", "JPN", "KOR", "TWN", "VNM", "THA", "MYS", "KHM", "LKA", "IDN", "PHL", "ARE", "SAU"]
+REGION_ASIA_ALL = ["CHN", "IND", "JPN", "KOR", "TWN", "VNM", "THA", "MYS", "KHM", "LKA", "IDN", "PHL", "ARE", "SAU", "OMN"]
 REGION_EUROPE_NO_RUS = ["DEU", "SWE", "FIN", "AUT", "BEL", "FRA", "ESP", "ITA", "POL", "LVA", "EST", "LTU", "CZE", "SVK", "ROU", "PRT", "IRL", "GBR", "NOR", "NLD", "SVN", "HRV", "DNK"]
 REGION_AFRICA = ["ZAF", "MOZ", "GAB", "CMR", "COG", "GNQ", "GHA", "NGA", "TZA", "UGA", "KEN"]
 REGION_OCEANIA = ["NZL", "AUS", "PNG"]
@@ -63,7 +63,7 @@ REGION_CENTRAL_AMERICA = ["CRI", "PAN", "GTM"]
 COUNTRY_GROUPS = {
     "Markets_Main_Asia": ["CHN", "IND", "JPN", "KOR", "TWN"],
     "Markets_SE_Asia":   ["VNM", "THA", "MYS", "KHM", "LKA", "IDN", "PHL"],
-    "Markets_MiddleEast":["ARE", "SAU"],
+    "Markets_MiddleEast":["ARE", "SAU", "OMN"],
     "Sources_SE_Asia":   ["VNM", "THA", "IDN", "MYS"],
     "Sources_Africa":    REGION_AFRICA,
     "Sources_SouthAmerica":REGION_SOUTH_AMERICA,
@@ -82,7 +82,7 @@ COUNTRY_NAME_MAP = {
     "CRI": "Costa Rica", "PAN": "Panama", "ECU": "Ecuador", "GTM": "Guatemala",
     "CHN": "China", "IND": "India", "JPN": "Japan", "KOR": "South Korea", "TWN": "Taiwan",
     "VNM": "Vietnam", "THA": "Thailand", "MYS": "Malaysia", "KHM": "Cambodia", "LKA": "Sri Lanka",
-    "ARE": "UAE", "SAU": "Saudi Arabia", "IDN": "Indonesia", "PHL": "Philippines",
+    "ARE": "UAE", "SAU": "Saudi Arabia", "OMN": "Oman", "IDN": "Indonesia", "PHL": "Philippines",
     "ZAF": "South Africa", "MOZ": "Mozambique", "GAB": "Gabon", "CMR": "Cameroon", "COG": "Congo",
     "GNQ": "Eq. Guinea", "GHA": "Ghana", "NGA": "Nigeria",
     "BRA": "Brazil", "URY": "Uruguay", "ARG": "Argentina", "CHL": "Chile", "SUR": "Suriname", "GUY": "Guyana",
