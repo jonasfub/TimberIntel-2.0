@@ -173,7 +173,51 @@ with c4:
 st.divider()
 
 # ==========================================
-# 数据提取逻辑 (Data Extraction Logic)
+# 🚀 核心优化：使用缓存极速提取数据
+# ==========================================
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_data_cached(start_d, end_d, origins_tuple, dests_tuple):
+    all_rows = []
+    batch_size = 5000       
+    chunk_days = 7          
+    needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,port_of_departure,exporter_name,importer_name,unique_record_id"
+    
+    current_start_dt = datetime.combine(start_d, datetime.min.time())
+    end_dt = datetime.combine(end_d, datetime.min.time())
+    current_chunk_start = current_start_dt
+    
+    while current_chunk_start <= end_dt:
+        current_chunk_end = min(current_chunk_start + timedelta(days=chunk_days), end_dt)
+        chunk_offset = 0
+        while True:
+            query = utils.supabase.table('trade_records')\
+                .select(needed_columns)\
+                .gte('transaction_date', current_chunk_start.date())\
+                .lte('transaction_date', current_chunk_end.date())
+            
+            if origins_tuple: query = query.in_('origin_country_code', list(origins_tuple))
+            if dests_tuple: query = query.in_('dest_country_code', list(dests_tuple))
+            
+            response = query.range(chunk_offset, chunk_offset + batch_size - 1).execute()
+            rows = response.data
+            
+            if not rows: break
+            
+            all_rows.extend(rows)
+            chunk_offset += len(rows)
+            if len(rows) < batch_size: break
+        
+        current_chunk_start = current_chunk_end + timedelta(days=1)
+    
+    if all_rows:
+        df = pd.DataFrame(all_rows)
+        df = df.sort_values(by='transaction_date', ascending=False)
+        return df
+    return pd.DataFrame()
+
+
+# ==========================================
+# 数据提取逻辑触发层
 # ==========================================
 start_d, end_d = None, None
 is_date_valid = False
@@ -190,63 +234,19 @@ if is_date_valid and start_d and end_d:
 
     # 点击按钮 -> 触发数据加载
     if st.button("📊 Load Analysis Report (加载分析报告)", type="primary", use_container_width=True):
-        # --- 核心配置 ---
-        all_rows = []
-        batch_size = 5000       # 单次请求最大行数
-        chunk_days = 7          # 每次只取 7 天的数据
-        
-        # 增加 'port_of_departure' 字段
-        needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,port_of_departure,exporter_name,importer_name,unique_record_id"
-        
-        with st.status("🚀 Starting Data Extraction (正在启动分片提取)...", expanded=True) as status:
-            msg_placeholder = st.empty()
-            progress_bar = st.progress(0)
-            
+        # 简化状态展示，数据请求交给缓存函数接管
+        with st.status("🚀 Extracting Data (正在提取数据... 首次加载可能需要几秒，后续将极速秒开)", expanded=True) as status:
             try:
-                current_start_dt = datetime.combine(start_d, datetime.min.time())
-                end_dt = datetime.combine(end_d, datetime.min.time())
-
-                total_days = (end_dt - current_start_dt).days
-                if total_days <= 0: total_days = 1
+                # 转换为元组确保缓存 Hash 正确工作
+                origins_tuple = tuple(ana_origins) if ana_origins else tuple()
+                dests_tuple = tuple(ana_dests) if ana_dests else tuple()
                 
-                current_chunk_start = current_start_dt
+                # 极速拉取数据
+                df = fetch_data_cached(start_d, end_d, origins_tuple, dests_tuple)
                 
-                while current_chunk_start <= end_dt:
-                    current_chunk_end = min(current_chunk_start + timedelta(days=chunk_days), end_dt)
-                    
-                    days_done = (current_chunk_start - current_start_dt).days
-                    progress = min(days_done / total_days, 0.99)
-                    progress_bar.progress(progress)
-                    msg_placeholder.info(f"📅 Fetching: {current_chunk_start.date()} to {current_chunk_end.date()} ... (Records: {len(all_rows)})")
-                    
-                    chunk_offset = 0
-                    while True:
-                        query = utils.supabase.table('trade_records')\
-                            .select(needed_columns)\
-                            .gte('transaction_date', current_chunk_start.date())\
-                            .lte('transaction_date', current_chunk_end.date())
-                        
-                        if ana_origins: query = query.in_('origin_country_code', ana_origins)
-                        if ana_dests: query = query.in_('dest_country_code', ana_dests)
-                        
-                        response = query.range(chunk_offset, chunk_offset + batch_size - 1).execute()
-                        rows = response.data
-                        
-                        if not rows: break
-                        
-                        all_rows.extend(rows)
-                        chunk_offset += len(rows)
-                        if len(rows) < batch_size: break
-                    
-                    current_chunk_start = current_chunk_end + timedelta(days=1)
+                status.update(label=f"✅ Extraction Complete: {len(df)} records (提取完成)", state="complete")
                 
-                progress_bar.progress(1.0)
-                msg_placeholder.empty()
-                status.update(label=f"✅ Extraction Complete: {len(all_rows)} records (提取完成)", state="complete")
-                
-                if all_rows:
-                    df = pd.DataFrame(all_rows)
-                    df = df.sort_values(by='transaction_date', ascending=False)
+                if not df.empty:
                     st.session_state['analysis_df'] = df
                     st.session_state['report_active'] = True
                 else:
