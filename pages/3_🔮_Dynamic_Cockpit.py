@@ -223,7 +223,7 @@ with st.container():
     
     vol_series = []
     for item in group_list:
-        item_data = vol_data[vol_data[target_col] == item].set_index('Month').reindex(months, fill_value=0)['quantity'].tolist()
+        item_data = vol_data[vol_data[target_col] == item].set_index('Month')['quantity'].reindex(months, fill_value=0).tolist()
         vol_series.append({
             "name": item,
             "type": "bar",
