@@ -148,14 +148,35 @@ if not df_form.empty:
         target_country = st.selectbox("👉 选择国家 (Select Country)", country_options, index=0)
         wood_filter = st.radio("木材类型过滤", ["All (全部)", "Softwood (仅软木)", "Hardwood (仅硬木)"], horizontal=True)
 
-    with c_trend2:
-        df_trend = df_form[df_form['dest_name'] == target_country].copy()
+        # 🆕 1. 预先按照“国家”和“木材类型”过滤数据，以便获取准确的树种列表
+        df_temp = df_form[df_form['dest_name'] == target_country].copy()
         
         if "Softwood" in wood_filter:
-            df_trend = df_trend[df_trend['Wood_Type'] == 'Softwood']
+            df_temp = df_temp[df_temp['Wood_Type'] == 'Softwood']
         elif "Hardwood" in wood_filter:
-            df_trend = df_trend[df_trend['Wood_Type'] == 'Hardwood']
+            df_temp = df_temp[df_temp['Wood_Type'] == 'Hardwood']
             
+        # 🆕 2. 获取当前条件下的可用树种列表
+        available_species = df_temp['Species'].dropna().unique().tolist()
+        available_species.sort()
+        
+        # 🆕 3. 添加树种多选筛选器 (Multiselect)
+        selected_species = st.multiselect(
+            "🌳 树种筛选 (Select Species)", 
+            options=available_species, 
+            default=[], 
+            help="留空表示查看所有树种 (Select specific species or leave blank for all)"
+        )
+
+    with c_trend2:
+        # 🆕 4. 继承前面过滤好的数据
+        df_trend = df_temp.copy()
+        
+        # 🆕 5. 如果用户选择了特定树种，则应用二次过滤
+        if selected_species:
+            df_trend = df_trend[df_trend['Species'].isin(selected_species)]
+            
+        # 👇 以下绘图逻辑保持原样
         if not df_trend.empty:
             df_trend['Month'] = pd.to_datetime(df_trend['transaction_date']).dt.to_period('M').astype(str)
             chart_trend = df_trend.groupby(['Month', 'Product_Form'])[y_col].sum().reset_index()
@@ -174,7 +195,7 @@ if not df_form.empty:
             fig_trend.update_xaxes(type='category')
             st.plotly_chart(fig_trend, use_container_width=True)
         else:
-            st.info(f"该国家 ({target_country}) 在所选类型 ({wood_filter}) 下无数据。")
+            st.info(f"该国家 ({target_country}) 在所选条件下无数据。")
 else:
     st.warning("无 Logs/Lumber 数据可供分析")
 
