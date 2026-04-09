@@ -25,18 +25,21 @@ COOL_DISTINCT = ['#2980b9', '#1abc9c', '#8e44ad', '#27ae60', '#3498db', '#16a085
 WARM_DISTINCT = ['#c0392b', '#f39c12', '#d35400', '#e84393', '#ff7675', '#e17055']
 
 # ==========================================
-# 🛠️ [修复核心]：补全缺失的国家名称列
+# 修改后 (安全防爆版):
 # ==========================================
 def get_name_safe(code):
-    if not code: return "Unknown"
+    # 1. 拦截所有空值，直接返回 Unknown
+    if pd.isna(code) or code == "" or code is None: 
+        return "Unknown"
+        
+    # 2. 获取映射名称
     name = config.COUNTRY_NAME_MAP.get(code, code)
-    return name.split(' (')[0] if '(' in name else name
+    
+    # 3. 强制转换为字符串，彻底杜绝 TypeError
+    name_str = str(name) 
+    
+    return name_str.split(' (')[0] if '(' in name_str else name_str
 
-if 'origin_name' not in df_full.columns:
-    df_full['origin_name'] = df_full['origin_country_code'].apply(get_name_safe)
-
-if 'dest_name' not in df_full.columns:
-    df_full['dest_name'] = df_full['dest_country_code'].apply(get_name_safe)
 # ==========================================
 
 # ==========================================
