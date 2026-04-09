@@ -1,8 +1,9 @@
 # config.py
-# 更新时间：2026-01-19 (Vizag修正版)
+# 更新时间：2026-04-09 (Vizag修正版 + 大小写与Unknown清洗修复)
 # 修复内容：
 # 1. 完善 Wood Chip 港口映射 (Vizag, Goa, Kakinada, Karaikal)
-# 2. 确保坐标库 Key 与映射后的英文名一致
+# 2. 确保坐标库 Key 与映射后的英文名一致 (统一为全大写)
+# 3. 增加 UNKNOWN 港口的占位坐标，防止前端地图或后端解析报错
 
 # ==========================================
 # 1. HS Code 映射表 (严格区分软硬木)
@@ -31,8 +32,8 @@ SPECIES_KEYWORDS = {
     "Spruce":     ["SPRUCE", "PICEA", "WHITEWOOD", "SPF"],
     "Fir":        ["FIR ", "ABIES", "DOUGLAS", "HEMLOCK"],
     "Pine (Gen)": ["PINE", "PINUS"], 
-    "Macrocarpa": ["MACROCARPA", "HESPEROCYPARIS"],  # 新增
-    "Cypress":    ["CYPRESS", "CUPRESSUS"],         # 新增
+    "Macrocarpa": ["MACROCARPA", "HESPEROCYPARIS"],
+    "Cypress":    ["CYPRESS", "CUPRESSUS"],
     "Larch":      ["LARCH", "LARIX"],
     "Oak":        ["OAK", "QUERCUS", "RED OAK", "WHITE OAK"],
     "Birch":      ["BIRCH", "BETULA"],
@@ -98,16 +99,19 @@ COUNTRY_NAME_MAP = {
 # 5. 港口经纬度映射表 (Key为标准英文名)
 # ==========================================
 PORT_COORDINATES = {
+    # [新增] 为清洗阶段保留的 Unknown 港口设置默认占位坐标
+    "UNKNOWN": {"lat": 0.0000, "lon": 0.0000},
+
     # --- Wood Chip 关键港口 ---
     "KAKINADA": {"lat": 16.9604, "lon": 82.2381},
     "KARAIKAL": {"lat": 10.9254, "lon": 79.8380},
-    "MORMUGAO (GOA)": {"lat": 15.4026, "lon": 73.8033}, # 标准名
+    "MORMUGAO (GOA)": {"lat": 15.4026, "lon": 73.8033},
     
     # --- 印度主要港口 ---
     "MUNDRA": {"lat": 22.8396, "lon": 69.7203},
     "NHAVA SHEVA": {"lat": 18.9511, "lon": 72.9567},
     "CHENNAI": {"lat": 13.0827, "lon": 80.2707},
-    "VISAKHAPATNAM": {"lat": 17.6868, "lon": 83.2185}, # Vizag 标准名
+    "VISAKHAPATNAM": {"lat": 17.6868, "lon": 83.2185},
     "COCHIN": {"lat": 9.9656, "lon": 76.2625},
     "COCHIN (ICTT)": {"lat": 10.1518, "lon": 76.4019},
     "KATTUPALLI": {"lat": 13.3069, "lon": 80.3392},
@@ -118,7 +122,7 @@ PORT_COORDINATES = {
     "KOLKATA": {"lat": 22.5478, "lon": 88.3182},
     "MUMBAI (AIR)": {"lat": 19.0886, "lon": 72.8680},
     
-    # --- 其他区域 (保持原有) ---
+    # --- 其他区域 ---
     "MOMBASA": {"lat": -4.0547, "lon": 39.6636},
     "LAMU": {"lat": -2.2717, "lon": 40.9020},
     "DAR ES SALAAM": {"lat": -6.8235, "lon": 39.2695},
@@ -195,32 +199,33 @@ SPECIES_CATEGORY_MAP = {
 # ==========================================
 # 7. 港口代码转名称映射 (Code -> Name)
 # ==========================================
+# [修复] 统一大写，与 PORT_COORDINATES 完美匹配
 PORT_CODE_TO_NAME = {
     # 截图中的 Wood Chip 港口
-    "INKAK1": "Kakinada",
-    "INKRK1": "Karaikal",
-    "INMRM1": "Mormugao (Goa)",
-    "INVTZ1": "Visakhapatnam", # [Fix] 将 INVTZ1 映射为 Visakhapatnam
+    "INKAK1": "KAKINADA",
+    "INKRK1": "KARAIKAL",
+    "INMRM1": "MORMUGAO (GOA)",
+    "INVTZ1": "VISAKHAPATNAM",
     
     # 其他常用港口
-    "INMUN1": "Mundra",
-    "INNSA1": "Nhava Sheva",
-    "INMAA1": "Chennai",
-    "INCOK1": "Cochin",
-    "INCOK4": "Cochin (ICTT)",
-    "INKAT1": "Kattupalli",
-    "INENR1": "Ennore",
-    "INTUT1": "Tuticorin",
-    "INTUT6": "Tuticorin",
-    "INIXY1": "Kandla",
-    "INHZA1": "Hazira",
-    "INCCU1": "Kolkata",
-    "INBOM4": "Mumbai (Air)",
+    "INMUN1": "MUNDRA",
+    "INNSA1": "NHAVA SHEVA",
+    "INMAA1": "CHENNAI",
+    "INCOK1": "COCHIN",
+    "INCOK4": "COCHIN (ICTT)",
+    "INKAT1": "KATTUPALLI",
+    "INENR1": "ENNORE",
+    "INTUT1": "TUTICORIN",
+    "INTUT6": "TUTICORIN",
+    "INIXY1": "KANDLA",
+    "INHZA1": "HAZIRA",
+    "INCCU1": "KOLKATA",
+    "INBOM4": "MUMBAI (AIR)",
     
     # ICDs
-    "INTKD6": "ICD Tughlakabad", "INWFD6": "ICD Whitefield", "INCPL6": "ICD Pithampur",
-    "INDHA6": "ICD Dhannad", "INGHR6": "ICD Garhi Harsaru", "INSNF6": "ICD Sanathnagar",
-    "INMBD6": "ICD Moradabad", "INPNK6": "ICD Panki", "INPTL6": "ICD Patli",
-    "INBDM6": "ICD Baddi", "INTMX6": "ICD Timmapur", "INSAJ6": "ICD Sachin",
-    "INAKP6": "ICD Ankleshwar", "INAJM6": "ICD Ajmer", "INNDA6": "ICD Noida"
+    "INTKD6": "ICD TUGHLAKABAD", "INWFD6": "ICD WHITEFIELD", "INCPL6": "ICD PITHAMPUR",
+    "INDHA6": "ICD DHANNAD", "INGHR6": "ICD GARHI HARSARU", "INSNF6": "ICD SANATHNAGAR",
+    "INMBD6": "ICD MORADABAD", "INPNK6": "ICD PANKI", "INPTL6": "ICD PATLI",
+    "INBDM6": "ICD BADDI", "INTMX6": "ICD TIMMAPUR", "INSAJ6": "ICD SACHIN",
+    "INAKP6": "ICD ANKLESHWAR", "INAJM6": "ICD AJMER", "INNDA6": "ICD NOIDA"
 }
