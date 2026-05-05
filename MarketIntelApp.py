@@ -586,7 +586,13 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.divider()
         
         st.subheader("📋 Detailed Records (详细数据)")
-        cols = ['transaction_date', 'hs_code', 'Species', 'origin_name', 'dest_name', 'port_of_departure', 'port_of_arrival', 'quantity', 'quantity_unit', 'total_value_usd', 'unit_price', 'exporter_name', 'importer_name']
+        # 在列表中加入了 'product_desc_text' (放在了 Species 后面)
+        cols = [
+            'transaction_date', 'hs_code', 'Species', 'product_desc_text', 
+            'origin_name', 'dest_name', 'port_of_departure', 'port_of_arrival', 
+            'quantity', 'quantity_unit', 'total_value_usd', 'unit_price', 
+            'exporter_name', 'importer_name'
+        ]
         final_cols = [c for c in cols if c in df.columns]
         st.dataframe(df[final_cols], use_container_width=True)
 
