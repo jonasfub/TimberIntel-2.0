@@ -382,6 +382,18 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                             }
                         }
                     }
+
+                    const endMarker = parentDoc.getElementById('print-end-marker');
+                    if (endMarker) {
+                        let endContainer = endMarker.closest('.element-container');
+                        if (endContainer) {
+                            let sibling = endContainer;
+                            while (sibling) {
+                                elementsToHide.push(sibling);
+                                sibling = sibling.nextElementSibling;
+                            }
+                        }
+                    }
                     
                     elementsToHide.forEach(el => el.classList.add('hide-for-print'));
 
@@ -652,6 +664,8 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
 
         st.divider()
         
+        # --- PDF 打印结束标记 ---
+        st.markdown('<div id="print-end-marker"></div>', unsafe_allow_html=True)
         st.subheader("📋 Detailed Records (详细数据)")
         # 在列表中加入了 'product_desc_text' (放在了 Species 后面)
         cols = [
