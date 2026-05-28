@@ -331,6 +331,9 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 if count_before > len(df_clean_qty):
                     st.warning(f"🧹 Removed {count_before - len(df_clean_qty)} outlier records")
 
+        # --- PDF 打印起始标记 ---
+        st.markdown('<div id="print-start-marker"></div>', unsafe_allow_html=True)
+
         # --- KPI & PDF Export ---
         import streamlit.components.v1 as components
         k1, k2, k3, k_print = st.columns([1, 1, 1, 1])
@@ -345,7 +348,49 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 """
                 <script>
                 function printPage() {
-                    window.parent.print();
+                    const parentDoc = window.parent.document;
+                    if (!parentDoc.getElementById('custom-print-style')) {
+                        let style = parentDoc.createElement('style');
+                        style.id = 'custom-print-style';
+                        style.innerHTML = `
+                            @media print {
+                                header[data-testid="stHeader"] { display: none !important; }
+                                [data-testid="stSidebar"] { display: none !important; }
+                                .stPlotlyChart { break-inside: avoid !important; page-break-inside: avoid !important; }
+                                [data-testid="stMetric"] { break-inside: avoid !important; page-break-inside: avoid !important; }
+                                [data-testid="stDataFrame"] { break-inside: avoid !important; page-break-inside: avoid !important; }
+                                div[data-testid="stExpander"] { break-inside: avoid !important; page-break-inside: avoid !important; }
+                                @page { size: landscape; margin: 10mm; }
+                                iframe { display: none !important; }
+                                .hide-for-print { display: none !important; }
+                            }
+                        `;
+                        parentDoc.head.appendChild(style);
+                    }
+
+                    const marker = parentDoc.getElementById('print-start-marker');
+                    let elementsToHide = [];
+                    if (marker) {
+                        let currentContainer = marker.closest('.element-container');
+                        if (currentContainer) {
+                            let sibling = currentContainer.previousElementSibling;
+                            while (sibling) {
+                                if (!sibling.querySelector('h1')) {
+                                    elementsToHide.push(sibling);
+                                }
+                                sibling = sibling.previousElementSibling;
+                            }
+                        }
+                    }
+                    
+                    elementsToHide.forEach(el => el.classList.add('hide-for-print'));
+
+                    setTimeout(() => {
+                        window.parent.print();
+                        setTimeout(() => {
+                            elementsToHide.forEach(el => el.classList.remove('hide-for-print'));
+                        }, 1000);
+                    }, 100);
                 }
                 </script>
                 <div style="display: flex; justify-content: center; align-items: center; height: 100%;">
