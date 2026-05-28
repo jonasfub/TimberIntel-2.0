@@ -361,8 +361,15 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                                 [data-testid="stDataFrame"] { break-inside: avoid !important; page-break-inside: avoid !important; }
                                 div[data-testid="stExpander"] { break-inside: avoid !important; page-break-inside: avoid !important; }
                                 
-                                /* Use A3 landscape to simulate a wider screen so Plotly doesn't hide the right-side legend */
-                                @page { size: A3 landscape; margin: 15mm; }
+                                /* 强制含有图表的列在打印时独占一行 (100%宽度)，从而保证有足够的横向空间渲染右侧 Legend */
+                                div[data-testid="column"]:has(div.stPlotlyChart), 
+                                div[data-testid="column"]:has(div[data-testid="stPlotlyChart"]) {
+                                    flex: 0 0 100% !important;
+                                    width: 100% !important;
+                                    min-width: 100% !important;
+                                }
+                                
+                                @page { size: landscape; margin: 15mm; }
                                 
                                 iframe { display: none !important; }
                                 .hide-for-print { display: none !important; }
