@@ -35,6 +35,7 @@ SPECIES_KEYWORDS = {
     "Macrocarpa": ["MACROCARPA", "HESPEROCYPARIS"],
     "Cypress":    ["CYPRESS", "CUPRESSUS"],
     "Larch":      ["LARCH", "LARIX"],
+    "Cedar":      ["CEDAR"],
     "Oak":        ["OAK", "QUERCUS", "RED OAK", "WHITE OAK"],
     "Birch":      ["BIRCH", "BETULA"],
     "Beech":      ["BEECH", "FAGUS"],
@@ -192,7 +193,7 @@ PORT_COORDINATES = {
 # 6. 树种分类归属
 # ==========================================
 SPECIES_CATEGORY_MAP = {
-    "Softwood": ["Radiata", "Macrocarpa", "Cypress", "Spruce", "Fir", "Pine (Gen)", "Larch", "SYP / Taeda"],
+    "Softwood": ["Radiata", "Macrocarpa", "Cypress", "Spruce", "Fir", "Pine (Gen)", "Larch", "SYP / Taeda", "Cedar"],
     "Hardwood": ["Oak", "Birch", "Beech", "Poplar", "Eucalyptus", "Acacia", "Rubberwood", "Teak", "Ash", "Maple", "Cherry", "Walnut", "Meranti"]
 }
 
