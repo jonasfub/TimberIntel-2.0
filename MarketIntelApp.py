@@ -356,11 +356,14 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                             @media print {
                                 header[data-testid="stHeader"] { display: none !important; }
                                 [data-testid="stSidebar"] { display: none !important; }
-                                .stPlotlyChart { break-inside: avoid !important; page-break-inside: avoid !important; }
+                                .stPlotlyChart, div[data-testid="stPlotlyChart"] { break-inside: avoid !important; page-break-inside: avoid !important; }
                                 [data-testid="stMetric"] { break-inside: avoid !important; page-break-inside: avoid !important; }
                                 [data-testid="stDataFrame"] { break-inside: avoid !important; page-break-inside: avoid !important; }
                                 div[data-testid="stExpander"] { break-inside: avoid !important; page-break-inside: avoid !important; }
-                                @page { size: landscape; margin: 10mm; }
+                                
+                                /* Use A3 landscape to simulate a wider screen so Plotly doesn't hide the right-side legend */
+                                @page { size: A3 landscape; margin: 15mm; }
+                                
                                 iframe { display: none !important; }
                                 .hide-for-print { display: none !important; }
                             }
