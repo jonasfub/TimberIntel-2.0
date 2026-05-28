@@ -331,11 +331,31 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                 if count_before > len(df_clean_qty):
                     st.warning(f"🧹 Removed {count_before - len(df_clean_qty)} outlier records")
 
-        # --- KPI ---
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Record Count", len(df))
-        k2.metric(f"Total Volume ({target_unit})", f"{df_clean_qty['quantity'].sum():,.0f}")
-        k3.metric("Total Value (USD)", f"${df['total_value_usd'].sum():,.0f}")
+        # --- KPI & PDF Export ---
+        import streamlit.components.v1 as components
+        k1, k2, k3, k_print = st.columns([1, 1, 1, 1])
+        with k1:
+            st.metric("Record Count", len(df))
+        with k2:
+            st.metric(f"Total Volume ({target_unit})", f"{df_clean_qty['quantity'].sum():,.0f}")
+        with k3:
+            st.metric("Total Value (USD)", f"${df['total_value_usd'].sum():,.0f}")
+        with k_print:
+            components.html(
+                """
+                <script>
+                function printPage() {
+                    window.parent.print();
+                }
+                </script>
+                <div style="display: flex; justify-content: center; align-items: center; height: 100%;">
+                    <button onclick="printPage()" style="margin-top: 10px; padding: 10px 20px; font-size: 16px; font-weight: bold; border-radius: 8px; background-color: #ff4b4b; color: white; border: none; cursor: pointer; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: all 0.3s ease;">
+                        🖨️ Export to PDF
+                    </button>
+                </div>
+                """,
+                height=70
+            )
         
         st.divider()
 
