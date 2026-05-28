@@ -361,9 +361,13 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                                 [data-testid="stDataFrame"] { break-inside: avoid !important; page-break-inside: avoid !important; }
                                 div[data-testid="stExpander"] { break-inside: avoid !important; page-break-inside: avoid !important; }
                                 
-                                /* 强制含有图表的列在打印时独占一行 (100%宽度)，从而保证有足够的横向空间渲染右侧 Legend */
-                                div[data-testid="column"]:has(div.stPlotlyChart), 
-                                div[data-testid="column"]:has(div[data-testid="stPlotlyChart"]) {
+                                /* 强制含有图表的容器允许换行，并让列宽100%，确保右侧Legend有充足空间 */
+                                div[data-testid="stHorizontalBlock"]:has(.stPlotlyChart),
+                                div[data-testid="stHorizontalBlock"]:has(div[data-testid="stPlotlyChart"]) {
+                                    flex-wrap: wrap !important;
+                                }
+                                div[data-testid="stHorizontalBlock"]:has(.stPlotlyChart) > div[data-testid="column"], 
+                                div[data-testid="stHorizontalBlock"]:has(div[data-testid="stPlotlyChart"]) > div[data-testid="column"] {
                                     flex: 0 0 100% !important;
                                     width: 100% !important;
                                     min-width: 100% !important;
