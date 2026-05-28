@@ -5,8 +5,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta, date
 import config
+import importlib
+importlib.reload(config)
 import utils  # 引用 utils.py
-
+importlib.reload(utils)
 # --- 页面基础设置 ---
 st.set_page_config(page_title="Timber Intel Core", page_icon="🌲", layout="wide")
 
