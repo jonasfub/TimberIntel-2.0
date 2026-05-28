@@ -373,7 +373,8 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                                     min-width: 100% !important;
                                 }
                                 
-                                @page { size: landscape; margin: 15mm; }
+                                /* 强制页面为 A2 尺寸横向，彻底骗过 Plotly 的屏幕宽度检测，100% 保留 Legend */
+                                @page { size: A2 landscape; margin: 15mm; }
                                 
                                 iframe { display: none !important; }
                                 .hide-for-print { display: none !important; }
