@@ -434,10 +434,10 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             r1_c1, r1_c2 = st.columns(2)
             with r1_c1:
                 chart_species = df_clean_qty.groupby(['Month', 'Species'])['quantity'].sum().reset_index()
-                st.plotly_chart(px.bar(chart_species, x="Month", y="quantity", color="Species", title=f"Monthly Volume by Species ({target_unit})", category_orders={"Month": sorted_months}).update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+                st.plotly_chart(px.bar(chart_species, x="Month", y="quantity", color="Species", title=f"Monthly Volume by Species ({target_unit})", category_orders={"Month": sorted_months}), use_container_width=True)
             with r1_c2:
                 chart_origin = df_clean_qty.groupby(['Month', 'origin_name'])['quantity'].sum().reset_index()
-                st.plotly_chart(px.bar(chart_origin, x="Month", y="quantity", color="origin_name", title=f"Monthly Volume by Origin ({target_unit})", category_orders={"Month": sorted_months}).update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+                st.plotly_chart(px.bar(chart_origin, x="Month", y="quantity", color="origin_name", title=f"Monthly Volume by Origin ({target_unit})", category_orders={"Month": sorted_months}), use_container_width=True)
         else:
             st.warning(f"No valid data for unit: {target_unit}")
         st.divider()
@@ -449,11 +449,13 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         r2_c1, r2_c2 = st.columns(2)
         with r2_c1:
             chart_val_origin = df.groupby(['Month', 'origin_name'])['total_value_usd'].sum().reset_index()
-            st.plotly_chart(px.bar(chart_val_origin, x="Month", y="total_value_usd", color="origin_name", title="Monthly Value by Origin (USD)", category_orders={"Month": sorted_months}).update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+            st.plotly_chart(px.bar(chart_val_origin, x="Month", y="total_value_usd", color="origin_name", title="Monthly Value by Origin (USD)", category_orders={"Month": sorted_months}), use_container_width=True)
         with r2_c2:
             g_col = 'dest_name' if ana_origins and not ana_dests else 'origin_name'
             label_suffix = "Dest" if ana_origins and not ana_dests else "Origin"
-            st.plotly_chart(px.pie(df, names=g_col, values='total_value_usd', hole=0.4, title=f"Value Share by {label_suffix} (USD)").update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+            fig_pie_share = px.pie(df, names=g_col, values='total_value_usd', hole=0.4, title=f"Value Share by {label_suffix} (USD)")
+            fig_pie_share.update_traces(textposition='inside', textinfo='percent', insidetextorientation='radial')
+            st.plotly_chart(fig_pie_share, use_container_width=True)
         st.divider()
 
         # ============================================
@@ -462,10 +464,10 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         st.subheader("🏷️ Price Analysis (价格分析)")
         if not df_clean_qty.empty:
             price_org = df_clean_qty.groupby('origin_name').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
-            st.plotly_chart(px.bar(price_org, x="origin_name", y="avg_price", title=f"Avg Price by Origin (USD/{target_unit})", color="avg_price", color_continuous_scale="Blues", text_auto='.0f').update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+            st.plotly_chart(px.bar(price_org, x="origin_name", y="avg_price", title=f"Avg Price by Origin (USD/{target_unit})", color="avg_price", color_continuous_scale="Blues", text_auto='.0f'), use_container_width=True)
             
             price_sp = df_clean_qty.groupby('Species').apply(lambda x: pd.Series({'avg_price': x['total_value_usd'].sum()/x['quantity'].sum()})).reset_index().sort_values('avg_price', ascending=False)
-            st.plotly_chart(px.bar(price_sp, x="Species", y="avg_price", title=f"Avg Price by Species (USD/{target_unit})", color="avg_price", color_continuous_scale="Greens", text_auto='.0f').update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+            st.plotly_chart(px.bar(price_sp, x="Species", y="avg_price", title=f"Avg Price by Species (USD/{target_unit})", color="avg_price", color_continuous_scale="Greens", text_auto='.0f'), use_container_width=True)
             
             st.markdown("##### 📉 Monthly Volume & Price Trends (月度量价走势 - 拆分)")
             
@@ -474,12 +476,12 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             
             st.markdown("**1. Monthly Volume Trend (月度数量趋势)**")
             fig_vol = px.bar(trend_df, x="Month", y="quantity", color="Species", title=f"Monthly Volume ({target_unit})", category_orders={"Month": sorted_months}, barmode='stack')
-            st.plotly_chart(fig_vol.update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+            st.plotly_chart(fig_vol, use_container_width=True)
             
             st.markdown("**2. Monthly Unit Price Trend (月度单价趋势)**")
             fig_price = px.bar(trend_df, x="Month", y="avg_price", color="Species", title="Monthly Avg Unit Price (USD)", category_orders={"Month": sorted_months}, barmode='group', text_auto='.0f')
             fig_price.update_layout(bargap=0.15, bargroupgap=0.1)
-            st.plotly_chart(fig_price.update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+            st.plotly_chart(fig_price, use_container_width=True)
 
         else:
             st.warning("No data for Price Analysis.")
@@ -495,10 +497,10 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         tc1, tc2 = st.columns(2)
         with tc1:
             top_exp = df.groupby('exporter_name')['total_value_usd'].sum().nlargest(10).sort_values().reset_index()
-            st.plotly_chart(px.bar(top_exp, y="exporter_name", x="total_value_usd", orientation='h', title="🔥 Top 10 Exporters", color="total_value_usd", color_continuous_scale="Oranges", text_auto='.2s').update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+            st.plotly_chart(px.bar(top_exp, y="exporter_name", x="total_value_usd", orientation='h', title="🔥 Top 10 Exporters", color="total_value_usd", color_continuous_scale="Oranges", text_auto='.2s'), use_container_width=True)
         with tc2:
             top_imp = df.groupby('importer_name')['total_value_usd'].sum().nlargest(10).sort_values().reset_index()
-            st.plotly_chart(px.bar(top_imp, y="importer_name", x="total_value_usd", orientation='h', title="🛒 Top 10 Buyers", color="total_value_usd", color_continuous_scale="Teal", text_auto='.2s').update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+            st.plotly_chart(px.bar(top_imp, y="importer_name", x="total_value_usd", orientation='h', title="🛒 Top 10 Buyers", color="total_value_usd", color_continuous_scale="Teal", text_auto='.2s'), use_container_width=True)
         st.divider()
 
         # ============================================
@@ -565,7 +567,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                     hover_data=['first_seen', 'count']
                 )
                 fig_new_imp.update_layout(yaxis={'categoryorder':'total ascending'})
-                st.plotly_chart(fig_new_imp.update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+                st.plotly_chart(fig_new_imp, use_container_width=True)
             else:
                 st.info("No new buyers found in this period.")
 
@@ -583,7 +585,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                     hover_data=['first_seen', 'count']
                 )
                 fig_new_exp.update_layout(yaxis={'categoryorder':'total ascending'})
-                st.plotly_chart(fig_new_exp.update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+                st.plotly_chart(fig_new_exp, use_container_width=True)
             else:
                 st.info("No new sellers found in this period.")
         
@@ -602,12 +604,12 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         with pl1:
             top_val_dep = df.groupby('port_of_departure')['total_value_usd'].sum().nlargest(10).index.tolist()
             chart_dep_val = df[df['port_of_departure'].isin(top_val_dep)].groupby(['port_of_departure', 'Species'])['total_value_usd'].sum().reset_index()
-            st.plotly_chart(px.bar(chart_dep_val, x="port_of_departure", y="total_value_usd", color="Species", title="Loading Port - by Value (USD)", category_orders={"port_of_departure": top_val_dep}).update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+            st.plotly_chart(px.bar(chart_dep_val, x="port_of_departure", y="total_value_usd", color="Species", title="Loading Port - by Value (USD)", category_orders={"port_of_departure": top_val_dep}), use_container_width=True)
         with pl2:
             if not df_clean_qty.empty:
                 top_qty_dep = df_clean_qty.groupby('port_of_departure')['quantity'].sum().nlargest(10).index.tolist()
                 chart_dep_qty = df_clean_qty[df_clean_qty['port_of_departure'].isin(top_qty_dep)].groupby(['port_of_departure', 'Species'])['quantity'].sum().reset_index()
-                st.plotly_chart(px.bar(chart_dep_qty, x="port_of_departure", y="quantity", color="Species", title=f"Loading Port - by Volume ({target_unit})", category_orders={"port_of_departure": top_qty_dep}).update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+                st.plotly_chart(px.bar(chart_dep_qty, x="port_of_departure", y="quantity", color="Species", title=f"Loading Port - by Volume ({target_unit})", category_orders={"port_of_departure": top_qty_dep}), use_container_width=True)
             else:
                 st.info("No volume data available for Loading Ports.")
 
@@ -618,12 +620,12 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
         with t1:
             top_val_arr = df.groupby('port_of_arrival')['total_value_usd'].sum().nlargest(10).index.tolist()
             chart_arr_val = df[df['port_of_arrival'].isin(top_val_arr)].groupby(['port_of_arrival', 'Species'])['total_value_usd'].sum().reset_index()
-            st.plotly_chart(px.bar(chart_arr_val, x="port_of_arrival", y="total_value_usd", color="Species", title="Discharge Port - by Value (USD)", category_orders={"port_of_arrival": top_val_arr}).update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+            st.plotly_chart(px.bar(chart_arr_val, x="port_of_arrival", y="total_value_usd", color="Species", title="Discharge Port - by Value (USD)", category_orders={"port_of_arrival": top_val_arr}), use_container_width=True)
         with t2:
             if not df_clean_qty.empty:
                 top_qty_arr = df_clean_qty.groupby('port_of_arrival')['quantity'].sum().nlargest(10).index.tolist()
                 chart_arr_qty = df_clean_qty[df_clean_qty['port_of_arrival'].isin(top_qty_arr)].groupby(['port_of_arrival', 'Species'])['quantity'].sum().reset_index()
-                st.plotly_chart(px.bar(chart_arr_qty, x="port_of_arrival", y="quantity", color="Species", title=f"Discharge Port - by Volume ({target_unit})", category_orders={"port_of_arrival": top_qty_arr}).update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+                st.plotly_chart(px.bar(chart_arr_qty, x="port_of_arrival", y="quantity", color="Species", title=f"Discharge Port - by Volume ({target_unit})", category_orders={"port_of_arrival": top_qty_arr}), use_container_width=True)
             else:
                 st.info("No volume data available for Discharge Ports.")
 
@@ -655,7 +657,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                     fig_map = px.scatter_geo(plot_map_df, lat='lat', lon='lon', size='quantity', color='dominant_species', hover_name='port_of_arrival', projection="natural earth", size_max=40, title=f"Global Arrival Port Distribution ({target_unit})")
                     fig_map.update_geos(showcountries=True, countrycolor="#e5e5e5", showcoastlines=True)
                     fig_map.update_layout(height=500, margin={"r":0,"t":30,"l":0,"b":0}, legend=dict(orientation="h", y=-0.1))
-                    st.plotly_chart(fig_map.update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+                    st.plotly_chart(fig_map, use_container_width=True)
                 else:
                     st.warning("No coordinate data available for map.")
             with cm2:
@@ -670,7 +672,7 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
                     port_sp_pie = df_clean_qty[df_clean_qty['port_of_arrival']==sel_port].groupby('Species')['quantity'].sum().reset_index()
                     fig_pie = px.pie(port_sp_pie, names='Species', values='quantity', hole=0.3)
                     fig_pie.update_layout(height=250, margin={"r":0,"t":0,"l":0,"b":0}, showlegend=False)
-                    st.plotly_chart(fig_pie.update_layout(legend=dict(orientation='h', yanchor='top', y=-0.2, xanchor='center', x=0.5)), use_container_width=True)
+                    st.plotly_chart(fig_pie, use_container_width=True)
 
         st.divider()
         
