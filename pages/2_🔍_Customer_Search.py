@@ -17,6 +17,11 @@ if 'analysis_df' not in st.session_state or st.session_state['analysis_df'].empt
 # 复制数据
 df_full = st.session_state['analysis_df'].copy()
 
+# --- 防止缺失关键列导致 KeyError ---
+for col in ['origin_name', 'dest_name', 'importer_name', 'exporter_name']:
+    if col not in df_full.columns:
+        df_full[col] = 'Unknown'
+
 # ==========================================
 # 🎨 [NEW] 高对比度配色方案 (High Contrast & Distinct)
 # ==========================================
