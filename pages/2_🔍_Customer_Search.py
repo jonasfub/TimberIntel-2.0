@@ -131,8 +131,8 @@ with c_f2:
 
 # Filter 3: Partner Country
 def get_partner_country(row):
-    if row['importer_name'] in target_companies: return row['origin_name'] 
-    elif row['exporter_name'] in target_companies: return row['dest_name']
+    if row.get('importer_name') in target_companies: return row.get('origin_name', 'Unknown') 
+    elif row.get('exporter_name') in target_companies: return row.get('dest_name', 'Unknown')
     return "Unknown"
 
 df_target_raw['Partner_Country'] = df_target_raw.apply(get_partner_country, axis=1)
