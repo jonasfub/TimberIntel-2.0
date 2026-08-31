@@ -168,7 +168,7 @@ if is_date_valid and start_d and end_d:
         batch_size = 5000       
         chunk_days = 7          
         
-        needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,port_of_departure,exporter_name,importer_name,unique_record_id"
+        needed_columns = "transaction_date,hs_code,product_desc_text,origin_country_code,dest_country_code,quantity,quantity_unit,total_value_usd,port_of_arrival,port_of_departure,exporter_name,importer_name,unique_record_id,raw_data->>importerOriginal,raw_data->>exporterOriginal"
         
         with st.status("🚀 Starting Data Extraction (正在启动分片提取)...", expanded=True) as status:
             msg_placeholder = st.empty()
@@ -689,10 +689,18 @@ if st.session_state.get('report_active', False) and not st.session_state['analys
             'transaction_date', 'hs_code', 'Species', 'product_desc_text', 
             'origin_name', 'dest_name', 'port_of_departure', 'port_of_arrival', 
             'quantity', 'quantity_unit', 'total_value_usd', 'unit_price', 
-            'exporter_name', 'importer_name'
+            'exporter_name', 'exporterOriginal', 'importer_name', 'importerOriginal'
         ]
         final_cols = [c for c in cols if c in df.columns]
-        st.dataframe(df[final_cols], use_container_width=True)
+        
+        # 为了满足 "英文的 importer name" 的需求，如果用户期待看到独立的英文列名
+        df_display = df[final_cols].copy()
+        if 'importer_name' in df_display.columns:
+            df_display['importer_name_en'] = df_display['importer_name']
+            if 'importer_name_en' not in final_cols:
+                final_cols.append('importer_name_en')
+        
+        st.dataframe(df_display[final_cols], use_container_width=True)
 
 elif start_d and end_d:
     st.info("👈 Please click 'Load Analysis Report' button to start.")

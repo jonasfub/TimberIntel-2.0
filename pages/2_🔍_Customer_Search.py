@@ -361,6 +361,14 @@ st.divider()
 # 📋 详细数据
 # ==========================================
 with st.expander(f"📄 查看筛选后的详细数据 ({len(df_clean)} records)"):
-    display_cols = ['transaction_date', 'hs_code', 'Species', 'origin_name', 'dest_name', 'Partner_Country', 'quantity', 'quantity_unit', 'total_value_usd', 'exporter_name', 'importer_name']
+    display_cols = ['transaction_date', 'hs_code', 'Species', 'origin_name', 'dest_name', 'Partner_Country', 'quantity', 'quantity_unit', 'total_value_usd', 'exporter_name', 'exporterOriginal', 'importer_name', 'importerOriginal']
     final_cols = [c for c in display_cols if c in df_clean.columns]
-    st.dataframe(df_clean[final_cols].sort_values('transaction_date', ascending=False), use_container_width=True, hide_index=True)
+    
+    # 添加一列专门标记为英文的 importer name
+    df_display = df_clean[final_cols].copy()
+    if 'importer_name' in df_display.columns:
+        df_display['importer_name_en'] = df_display['importer_name']
+        if 'importer_name_en' not in final_cols:
+            final_cols.append('importer_name_en')
+            
+    st.dataframe(df_display[final_cols].sort_values('transaction_date', ascending=False), use_container_width=True, hide_index=True)
