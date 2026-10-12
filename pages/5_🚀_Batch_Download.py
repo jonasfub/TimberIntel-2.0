@@ -47,11 +47,12 @@ data_mode = st.radio(
 specific_country_val = None
 if "提单" in data_mode:
     shipping_country_options = {
+        "new_zealand": "🇳🇿 新西兰提单 (new_zealand)",
+        "australia": "🇦🇺 澳大利亚/澳洲提单 (australia)",
         "america": "🇺🇸 美国提单 (america)",
         "vietnam": "🇻🇳 越南提单 (vietnam)",
         "india": "🇮🇳 印度提单 (india)",
         "mexico": "🇲🇽 墨西哥提单 (mexico)",
-        "australia": "🇦🇺 澳大利亚提单 (australia)",
         "philippines": "🇵🇭 菲律宾提单 (philippines)",
         "chile": "🇨🇱 智利提单 (chile)",
         "brazil": "🇧🇷 巴西提单 (brazil)",

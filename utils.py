@@ -119,8 +119,10 @@ def identify_species(description_text):
 SPECIFIC_COUNTRY_ISO_MAP = {
     "america": "USA", "usa": "USA",
     "india": "IND", "vietnam": "VNM",
+    "new_zealand": "NZL", "nzl": "NZL",
+    "australia": "AUS", "aus": "AUS",
     "mexico": "MEX", "chile": "CHL",
-    "brazil": "BRA", "australia": "AUS",
+    "brazil": "BRA",
     "panama": "PAN", "peru": "PER",
     "pakistan": "PAK", "turkey": "TUR", "philippines": "PHL"
 }
