@@ -35,6 +35,45 @@ with st.sidebar:
 # --- 界面 ---
 st.markdown("### 🛠️ Task Configuration (任务配置)")
 
+# 🆕 数据模式轻量选择 (默认普通关单，无缝兼容原有操作习惯)
+data_mode = st.radio(
+    "Data Source Mode (数据模式)",
+    options=["海关关单数据 (Customs Data)", "海运提单/指定数据源 (Shipping / Bill of Lading)"],
+    index=0,
+    horizontal=True,
+    help="默认查询全球海关关单数据 (/v2/trade)。如需查询提单号、集装箱柜号、母单等一手海运提单记录，请切换至海运提单 (/v2/trade/specific)。"
+)
+
+specific_country_val = None
+if "提单" in data_mode:
+    shipping_country_options = {
+        "america": "🇺🇸 美国提单 (america)",
+        "vietnam": "🇻🇳 越南提单 (vietnam)",
+        "india": "🇮🇳 印度提单 (india)",
+        "mexico": "🇲🇽 墨西哥提单 (mexico)",
+        "australia": "🇦🇺 澳大利亚提单 (australia)",
+        "philippines": "🇵🇭 菲律宾提单 (philippines)",
+        "chile": "🇨🇱 智利提单 (chile)",
+        "brazil": "🇧🇷 巴西提单 (brazil)",
+        "custom": "✏️ 自定义国家标识..."
+    }
+    col_sc1, col_sc2 = st.columns([2, 3])
+    with col_sc1:
+        selected_sc_key = st.selectbox(
+            "Shipping Database (提单数据源)",
+            options=list(shipping_country_options.keys()),
+            format_func=lambda x: shipping_country_options[x],
+            key="specific_country_select"
+        )
+    with col_sc2:
+        if selected_sc_key == "custom":
+            custom_input = st.text_input("输入国家英文代码 (如 panama, peru 等)", value="america", key="custom_country_input")
+            specific_country_val = custom_input.strip().lower()
+        else:
+            specific_country_val = selected_sc_key
+            st.caption(f"ℹ️ 当前激活: `country={specific_country_val}` (将调用 /v2/trade/specific 接口)")
+
+
 c_dl1, c_dl2 = st.columns(2)
 with c_dl1: 
     st.caption("Quick Select - Origin (快捷选择-出口国):")
@@ -158,14 +197,21 @@ st.markdown("#### 2️⃣ API Volume Check (API 预检)")
 dl_date_range = st.date_input("Date Range (下载日期范围)", value=(datetime.today() - timedelta(days=7), datetime.today()), key="dl_date_key")
 
 if st.button("🔍 Check Volume (查询数据量)"):
-    with st.status(f"Querying Tendata API... (Keyword: {api_keyword_str if api_keyword_str else 'None'})", expanded=True) as status:
+    mode_label = f" [提单模式: {specific_country_val}]" if specific_country_val else " [海关关单]"
+    with st.status(f"Querying Tendata API...{mode_label} (Keyword: {api_keyword_str if api_keyword_str else 'None'})", expanded=True) as status:
         if not token: status.update(label="Auth Failed (认证失败)", state="error"); st.stop()
         results = []
         total_count = 0
         for hs in final_hs:
             for d in final_dirs:
-                # 调用 utils, 传入 keyword
-                res = utils.fetch_tendata_api(hs, dl_date_range[0], dl_date_range[1], token, d, dl_origins, dl_dests, just_checking=True, keyword=api_keyword_str)
+                # 调用 utils, 传入 keyword 和 specific_country
+                res = utils.fetch_tendata_api(
+                    hs, dl_date_range[0], dl_date_range[1], token, d, 
+                    dl_origins, dl_dests, 
+                    just_checking=True, 
+                    keyword=api_keyword_str,
+                    specific_country=specific_country_val
+                )
                 if res and str(res.get('code')) == '200':
                     data_node = res.get('data', {})
                     count = data_node.get('total', 0)
@@ -212,7 +258,14 @@ if start_btn:
                 total_saved_for_this_hs = 0
                 
                 while has_more_data:
-                    res = utils.fetch_tendata_api(hs, dl_date_range[0], dl_date_range[1], token, d, dl_origins, dl_dests, just_checking=False, page_no=page, keyword=api_keyword_str)
+                    res = utils.fetch_tendata_api(
+                        hs, dl_date_range[0], dl_date_range[1], token, d, 
+                        dl_origins, dl_dests, 
+                        just_checking=False, 
+                        page_no=page, 
+                        keyword=api_keyword_str,
+                        specific_country=specific_country_val
+                    )
                     if res and str(res.get('code')) == '200':
                         saved_count, api_count = utils.save_to_supabase(res) # 调用 utils
                         total_saved_for_this_hs += saved_count

@@ -115,9 +115,23 @@ def identify_species(description_text):
                 return species
     return "Other"
 
-def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports", origin_codes=None, dest_codes=None, just_checking=False, page_no=1, keyword=None, retry_count=0):
-    """获取数据，包含自动重试机制 (40302 Token失效自动修复)"""
-    url = "https://open-api.tendata.cn/v2/trade"
+# 提单特定数据源与 ISO 国家代码映射表 (用于补全如美单进口缺失的 dest_country_code)
+SPECIFIC_COUNTRY_ISO_MAP = {
+    "america": "USA", "usa": "USA",
+    "india": "IND", "vietnam": "VNM",
+    "mexico": "MEX", "chile": "CHL",
+    "brazil": "BRA", "australia": "AUS",
+    "panama": "PAN", "peru": "PER",
+    "pakistan": "PAK", "turkey": "TUR", "philippines": "PHL"
+}
+
+def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports", origin_codes=None, dest_codes=None, just_checking=False, page_no=1, keyword=None, specific_country=None, retry_count=0):
+    """获取数据，支持海关关单 (/v2/trade) 与海运提单/指定数据源 (/v2/trade/specific)"""
+    if specific_country:
+        url = "https://open-api.tendata.cn/v2/trade/specific"
+    else:
+        url = "https://open-api.tendata.cn/v2/trade"
+
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
     payload = {
@@ -128,6 +142,8 @@ def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports"
         "endDate": str(end_date), 
         "hsCode": hs_code
     }
+    if specific_country:
+        payload['country'] = str(specific_country).strip().lower()
     if origin_codes: payload['countryOfOriginCode'] = ";".join(origin_codes)
     if dest_codes: payload['countryOfDestinationCode'] = ";".join(dest_codes)
     
@@ -156,6 +172,7 @@ def fetch_tendata_api(hs_code, start_date, end_date, token, trade_type="imports"
                         hs_code, start_date, end_date, 
                         new_token, 
                         trade_type, origin_codes, dest_codes, just_checking, page_no, keyword, 
+                        specific_country=specific_country,
                         retry_count=1
                     )
                 else:
@@ -181,13 +198,26 @@ def save_to_supabase(api_json_data):
         goods_desc_list = item.get('goodsDesc') or []
         goods_desc_str = "; ".join([str(x) for x in goods_desc_list])
         
+        origin_code = item.get('countryOfOriginCode')
+        dest_code = item.get('countryOfDestinationCode')
+        db_source = str(item.get('database', '')).lower()
+        catalog_flow = str(item.get('catalog', 'imports')).lower()
+
+        # 提单数据源自动补全对应国别码 (如美国进口提单自身无 dest_code，自动填充 USA)
+        if db_source in SPECIFIC_COUNTRY_ISO_MAP:
+            mapped_iso = SPECIFIC_COUNTRY_ISO_MAP[db_source]
+            if catalog_flow == 'imports' and not dest_code:
+                dest_code = mapped_iso
+            elif catalog_flow == 'exports' and not origin_code:
+                origin_code = mapped_iso
+
         row = {
             "unique_record_id": item.get('id'),
             "transaction_date": item.get('date'),
             "hs_code": hs_code_val,
             "product_desc_text": goods_desc_str,
-            "origin_country_code": item.get('countryOfOriginCode'),
-            "dest_country_code": item.get('countryOfDestinationCode'),
+            "origin_country_code": origin_code,
+            "dest_country_code": dest_code,
             "port_of_departure": item.get('portOfDeparture'),
             "port_of_arrival": item.get('portOfArrival'),
             "importer_name": item.get('importer'),
