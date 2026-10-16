@@ -6,25 +6,48 @@ from datetime import datetime, timedelta
 from supabase import create_client, Client
 import config  # 引用 config.py
 
+import os
+import pathlib
+import tomllib
+
 # --- 核心配置 ---
-# ⚠️ 请确保这里的 URL 和 Key 是正确的 (基于你之前提供的代码)
-SUPABASE_URL = "https://ajfmhcustdzdmcbgowgx.supabase.co"
-SUPABASE_KEY = "sb_secret_UdSZUH99OqFQ0Irca_LUWg_a7Sp-j_7"
-TENDATA_API_KEY = "42127b0db5597b4a0d7063b99900c0eb"
+# 从 .streamlit/secrets.toml 或环境变量读取密钥，避免明文上传 GitHub 导致密钥被自动吊销
+def _load_secret(key_name, default=""):
+    if key_name in os.environ:
+        return os.environ[key_name]
+    secrets_path = pathlib.Path(__file__).resolve().parent / ".streamlit" / "secrets.toml"
+    if secrets_path.exists():
+        try:
+            with open(secrets_path, "rb") as f:
+                data = tomllib.load(f)
+                if key_name in data:
+                    return data[key_name]
+        except Exception:
+            pass
+    try:
+        if key_name in st.secrets:
+            return st.secrets[key_name]
+    except Exception:
+        pass
+    return default
+
+SUPABASE_URL = _load_secret("SUPABASE_URL", "https://ajfmhcustdzdmcbgowgx.supabase.co")
+SUPABASE_KEY = _load_secret("SUPABASE_KEY", "")
+TENDATA_API_KEY = _load_secret("TENDATA_API_KEY", "42127b0db5597b4a0d7063b99900c0eb")
 
 # ✅ 新增：账户信息查询接口 (用于获取余额和会员有效期)
 ACCOUNT_INFO_URL = "https://open-api.tendata.cn/v2/account"
 
 # --- 1. 数据库连接 (使用缓存，避免重复连接) ---
 @st.cache_resource
-def init_supabase():
+def init_supabase(url: str = SUPABASE_URL, key: str = SUPABASE_KEY):
     try:
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
+        return create_client(url, key)
     except Exception as e:
         st.error(f"❌ 数据库连接失败: {e}")
         return None
 
-supabase = init_supabase()
+supabase = init_supabase(SUPABASE_URL, SUPABASE_KEY)
 
 # --- 2. 自动 Token 管理 ---
 def get_auto_token(force_refresh=False):

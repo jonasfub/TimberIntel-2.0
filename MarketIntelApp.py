@@ -84,6 +84,9 @@ with st.sidebar:
             last_year_val = today.year - 1
             st.session_state['global_date_range'] = (date(last_year_val, 1, 1), date(last_year_val, 12, 31))
             
+        elif range_type == 'this_year':
+            st.session_state['global_date_range'] = (date(today.year, 1, 1), today)
+            
         elif range_type == 'last_6_months':
             end_date = first_of_this_month - timedelta(days=1)
             start_month = first_of_this_month.month - 6
@@ -94,7 +97,7 @@ with st.sidebar:
             start_date = date(start_year, start_month, 1)
             st.session_state['global_date_range'] = (start_date, end_date)
 
-    # --- 快捷按钮布局 (2行2列) ---
+    # --- 快捷按钮布局 ---
     c_d1, c_d2 = st.columns(2)
     with c_d1: 
         st.button("Last Month", help="Previous full calendar month", on_click=set_date_range, args=('last_month',), use_container_width=True)
@@ -106,6 +109,8 @@ with st.sidebar:
         st.button("Last 6 Months", help="Previous 6 full calendar months", on_click=set_date_range, args=('last_6_months',), use_container_width=True)
     with c_d4: 
         st.button("Last Year", help="Previous full calendar year", on_click=set_date_range, args=('last_year',), use_container_width=True)
+
+    st.button("This Year", help="Current calendar year to date (Jan 1 - Today)", on_click=set_date_range, args=('this_year',), use_container_width=True)
 
     # --- 初始化默认值 ---
     today = datetime.now().date()
